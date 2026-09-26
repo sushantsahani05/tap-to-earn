@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tap to Earn</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #1a1d24;
+    --accent: #4fd1c5;
+    --text: #f5f5f5;
+    --muted: #9aa0a6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 40px;
+    min-height: 100vh;
+  }
+  h1 { font-size: 18px; color: var(--muted); font-weight: 500; margin: 4px 0 0; }
+  .points {
+    font-size: 48px;
+    font-weight: 700;
+    margin: 8px 0 24px;
+    color: var(--accent);
+  }
+  .tap-button {
+    width: 200px;
+    height: 200px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #5eead4, #14b8a6);
+    border: none;
+    box-shadow: 0 8px 24px rgba(20, 184, 166, 0.4);
+    font-size: 20px;
+    font-weight: 700;
+    color: #04231f;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.08s ease;
+  }
+  .tap-button:active { transform: scale(0.93); }
+  .card {
+    width: 100%;
+    max-width: 360px;
+    background: var(--card);
+    border-radius: 14px;
+    padding: 16px;
+    margin-top: 24px;
+  }
+  .card p { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+  .referral-code {
+    font-family: monospace;
+    font-size: 16px;
+    background: #10131a;
+    padding: 10px 12px;
+    border-radius: 8px;
+    word-break: break-all;
+  }
+  .share-btn {
+    margin-top: 12px;
+    width: 100%;
+    padding: 12px;
+    border-radius: 10px;
+    border: none;
+    background: var(--accent);
+    color: #04231f;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .stat-row { display: flex; justify-content: space-between; margin-top: 6px; font-size: 13px; }
+
+  .chat-card { display: flex; flex-direction: column; height: 320px; }
+  .chat-log {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 10px;
+    padding-right: 2px;
+  }
+  .msg {
+    max-width: 85%;
+    padding: 8px 12px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+  .msg.user { align-self: flex-end; background: var(--accent); color: #04231f; }
+  .msg.assistant { align-self: flex-start; background: #10131a; color: var(--text); }
+  .chat-input-row { display: flex; gap: 8px; }
+  .chat-input-row input {
+    flex: 1;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid #2a2e37;
+    background: #10131a;
+    color: var(--text);
+    font-size: 14px;
+  }
+  .chat-input-row button {
+    padding: 10px 16px;
+    border-radius: 10px;
+    border: none;
+    background: var(--accent);
+    color: #04231f;
+    font-weight: 700;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+  <h1>Your balance</h1>
+  <div class="points" id="points">0</div>
+  <button class="tap-button" id="tapBtn">TAP</button>
+
+  <div class="card">
+    <p>Invite friends — you both get bonus points</p>
+    <div class="referral-code" id="refLink">loading...</div>
+    <button class="share-btn" id="shareBtn">Share invite link</button>
+    <div class="stat-row"><span>Total taps</span><span id="taps">0</span></div>
+    <div class="stat-row"><span>Friends invited</span><span id="referrals">0</span></div>
+  </div>
+
+  <div class="card chat-card">
+    <p>Ask the assistant</p>
+    <div class="chat-log" id="chatLog"></div>
+    <div class="chat-input-row">
+      <input id="chatInput" type="text" placeholder="Ask about points, referrals..." />
+      <button id="chatSend">Send</button>
+    </div>
+  </div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  tg?.ready();
+  tg?.expand();
+
+  // BOTNAME must match your bot's @username (no @) for invite links to work.
+  const BOT_USERNAME = "your_bot_username";
+  const API_BASE = ""; // same origin as this page
+
+  const userId = tg?.initDataUnsafe?.user?.id?.toString() || "demo-user";
+  const params = new URLSearchParams(window.location.search);
+  const referralCode = params.get("ref");
+
+  const pointsEl = document.getElementById("points");
+  const tapsEl = document.getElementById("taps");
+  const referralsEl = document.getElementById("referrals");
+  const refLinkEl = document.getElementById("refLink");
+
+  let currentUser = null;
+
+  async function loadUser() {
+    const res = await fetch(`${API_BASE}/api/user`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, referralCode }),
+    });
+    currentUser = await res.json();
+    render();
+  }
+
+  function render() {
+    pointsEl.textContent = currentUser.points;
+    tapsEl.textContent = currentUser.taps;
+    referralsEl.textContent = currentUser.referralCount;
+    refLinkEl.textContent = `https://t.me/${BOT_USERNAME}?start=${currentUser.referralCode}`;
+  }
+
+  document.getElementById("tapBtn").addEventListener("click", async () => {
+    tg?.HapticFeedback?.impactOccurred("light");
+    const res = await fetch(`${API_BASE}/api/tap`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId }),
+    });
+    currentUser = await res.json();
+    render();
+  });
+
+  document.getElementById("shareBtn").addEventListener("click", () => {
+    const link = `https://t.me/${BOT_USERNAME}?start=${currentUser.referralCode}`;
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Join me and earn points!")}`;
+    tg?.openTelegramLink ? tg.openTelegramLink(shareUrl) : window.open(shareUrl, "_blank");
+  });
+
+  loadUser();
+
+  // --- Chat assistant ---
+  const chatLog = document.getElementById("chatLog");
+  const chatInput = document.getElementById("chatInput");
+  const chatSend = document.getElementById("chatSend");
+
+  function addMessage(role, text) {
+    const div = document.createElement("div");
+    div.className = `msg ${role}`;
+    div.textContent = text;
+    chatLog.appendChild(div);
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  async function sendChat() {
+    const text = chatInput.value.trim();
+    if (!text) return;
+    addMessage("user", text);
+    chatInput.value = "";
+    chatSend.disabled = true;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, message: text }),
+      });
+      const data = await res.json();
+      addMessage("assistant", data.reply || data.error || "Something went wrong.");
+    } catch (err) {
+      addMessage("assistant", "Couldn't reach the assistant. Try again.");
+    } finally {
+      chatSend.disabled = false;
+    }
+  }
+
+  chatSend.addEventListener("click", sendChat);
+  chatInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") sendChat();
+  });
+</script>
+</body>
+</html>
