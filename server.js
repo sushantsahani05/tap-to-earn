@@ -13,13 +13,16 @@ const POINTS_PER_TAP = 10000;
 const REFERRAL_BONUS = 500000000;
 const TASK_REWARD = 100000000;
 const MAX_CHARGES = 1000;
-const CHARGE_REGEN_PER_SEC = 1;
-const AD_REWARD_CHARGES = 500;
-const AD_REWARD_POINTS = 1000000;
+const CHARGE_REGEN_PER_SEC = 1; // +1 charge every second
+const AD_REWARD_CHARGES = 500; // charges granted per completed ad view
+const AD_REWARD_POINTS = 1000000; // points granted per completed ad view (points ad)
 
 const TASK_KEYS = ["telegram", "youtube", "instagram"];
-const TELEGRAM_CHANNEL = process.env.TELEGRAM_CHANNEL || "@your_channel";
+const TELEGRAM_CHANNEL = "@bakicoins"; // used to verify channel membership
 
+// Checks whether a user has actually joined the Telegram channel, using
+// the Bot API. Returns true/false. The bot must be a member of the
+// channel (it can just be added like any subscriber) for this to work.
 async function verifyTelegramMembership(userId) {
   const token = process.env.BOT_TOKEN;
   if (!token) return false;
@@ -40,6 +43,8 @@ async function verifyTelegramMembership(userId) {
   }
 }
 
+// Recalculates charges based on time elapsed since the user was last seen,
+// so charges keep regenerating even while the app is closed.
 function regenCharges(user) {
   const now = Date.now();
   const last = new Date(user.lastChargeTime).getTime();
@@ -52,6 +57,8 @@ function regenCharges(user) {
   return user;
 }
 
+// Fills in any new fields on an existing user record without touching
+// their points/balance — so upgrading the app never wipes progress.
 function backfillUser(user) {
   if (user.charges === undefined) user.charges = MAX_CHARGES;
   if (user.maxCharges === undefined) user.maxCharges = MAX_CHARGES;
@@ -63,6 +70,7 @@ function backfillUser(user) {
   return user;
 }
 
+// Get or create a user. Called when the mini app first loads.
 app.post("/api/user", async (req, res) => {
   const { userId, referralCode } = req.body;
   if (!userId) return res.status(400).json({ error: "userId required" });
@@ -72,7 +80,7 @@ app.post("/api/user", async (req, res) => {
 
   if (!user) {
     user = {
-      id: String(userId),
+      id: userId,
       points: 0,
       charges: MAX_CHARGES,
       maxCharges: MAX_CHARGES,
@@ -85,9 +93,10 @@ app.post("/api/user", async (req, res) => {
     };
     db.data.users[userId] = user;
 
+    // Apply referral bonus if this user arrived via someone's invite link
     if (referralCode) {
       const referrer = Object.values(db.data.users).find(
-        (u) => u.referralCode === referralCode && u.id !== String(userId)
+        (u) => u.referralCode === referralCode && u.id !== userId
       );
       if (referrer) {
         user.referredBy = referrer.id;
@@ -105,6 +114,7 @@ app.post("/api/user", async (req, res) => {
   res.json(user);
 });
 
+// Register a tap — costs 1 charge, pays out points
 app.post("/api/tap", async (req, res) => {
   const { userId } = req.body;
   if (!userId) return res.status(400).json({ error: "userId required" });
@@ -127,6 +137,7 @@ app.post("/api/tap", async (req, res) => {
   res.json(user);
 });
 
+// Mark a task complete and pay out its reward (once per task)
 app.post("/api/task/complete", async (req, res) => {
   const { userId, task } = req.body;
   if (!userId || !TASK_KEYS.includes(task)) {
@@ -143,6 +154,8 @@ app.post("/api/task/complete", async (req, res) => {
     return res.status(400).json({ error: "task already completed", user });
   }
 
+  // Telegram membership can actually be checked. YouTube/Instagram can't be
+  // verified for free, so those are honor-system for now (see README).
   if (task === "telegram") {
     const joined = await verifyTelegramMembership(userId);
     if (!joined) {
@@ -160,8 +173,11 @@ app.post("/api/task/complete", async (req, res) => {
   res.json(user);
 });
 
-// Adsgram Webhook Reward Endpoint
-// Reward URL in Adsgram Dashboard: https://YOUR-DOMAIN/api/ad/reward?userId=[userId]&type=points
+// Called by Adsgram's servers (not the browser) after a user finishes
+// watching a rewarded ad. Set this exact URL, with [userId] left as-is,
+// as the "Reward URL" in each Adsgram ad block's settings:
+//   Charges ad block: https://YOUR-DOMAIN/api/ad/reward?userId=[userId]&type=charges
+//   Points ad block:  https://YOUR-DOMAIN/api/ad/reward?userId=[userId]&type=points
 app.get("/api/ad/reward", async (req, res) => {
   const { userId, type } = req.query;
   if (!userId) return res.status(400).send("userId required");
@@ -176,6 +192,7 @@ app.get("/api/ad/reward", async (req, res) => {
   if (type === "points") {
     user.points += AD_REWARD_POINTS;
   } else {
+    // Default to charges for backward compatibility
     user.charges = Math.min(user.maxCharges, user.charges + AD_REWARD_CHARGES);
   }
 
@@ -183,6 +200,7 @@ app.get("/api/ad/reward", async (req, res) => {
   res.status(200).send("OK");
 });
 
+// Simple leaderboard
 app.get("/api/leaderboard", async (req, res) => {
   const db = await getDb();
   const top = Object.values(db.data.users)
