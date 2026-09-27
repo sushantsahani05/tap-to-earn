@@ -8,12 +8,17 @@ Tasks (social follows for points), and Airdrop (placeholder for later).
 - `bot.js` — the Telegram bot that opens the mini app and passes referral codes
 - `server.js` — the backend API (user state, tap, tasks, leaderboard)
 - `public/index.html` — the mini app UI with bottom-tab navigation
-- `db.js` — simple JSON-file storage (swap for a real DB before scaling)
+- `db.js` — persistent storage using Upstash Redis (see setup below —
+  **required**, the app won't start without it)
 
 ## How the app works
-- **Home** — balance and a TAP button. Each tap costs 1 charge and pays
-  10,000 points. Charges max out at 1000 and regenerate at 1 per second,
-  even while the app is closed (calculated from elapsed time on each load).
+- **Home** — balance and a TAP button showing your `tap-icon.png` image,
+  with a press animation and a floating "+10,000" popup on each tap. Each
+  tap costs 1 charge and pays 10,000 points. Charges max out at 1000.
+  **Charges no longer regenerate gradually** — once they hit 0, a 1-hour
+  timer starts, and after that hour passes they refill to full all at
+  once (not a trickle). A "Refills in MM:SS" countdown shows under the
+  button while waiting.
 - **Refer** — a personal invite link. When someone joins through it, both
   the inviter and the new user get 500,000,000 points.
 - **Tasks** — one-time social tasks (join Telegram, subscribe on YouTube,
@@ -29,20 +34,19 @@ Tasks (social follows for points), and Airdrop (placeholder for later).
     verify a subscribe/follow, so clicking Verify pays out immediately.
     See the note below if you want to tighten this later.
 - **Airdrop** — placeholder screen for a future token/reward drop.
-- **Watch Ad buttons (Home)** — two rewarded ads via Adsgram, a
-  Telegram-native ad network: one grants +500 charges, the other grants
-  +1,000,000 points. Each needs its **own** Adsgram ad block (create two
-  in the dashboard). Setup for each:
-  1. In `public/index.html`, replace `"your-charges-block-id"` and
-     `"your-points-block-id"` with the real Block IDs from the Adsgram
-     dashboard.
-  2. In the Adsgram dashboard, set each block's **Reward URL**:
-     - Charges block: `https://YOUR-DOMAIN/api/ad/reward?userId=[userId]&type=charges`
-     - Points block: `https://YOUR-DOMAIN/api/ad/reward?userId=[userId]&type=points`
-     Leave `[userId]` exactly as-is — Adsgram fills it in automatically.
-     This is what actually credits the reward server-side once someone
-     finishes watching, so it can't be faked by just clicking through in
-     the browser.
+- **Watch Ad buttons (Monetag)** — two reward buttons using Monetag:
+  Rewarded Interstitial for +500 charges, Rewarded
+  Popup for +1,000,000 points. Also enables Monetag's In-App Interstitial,
+  which shows ads automatically in the background (up to 2 per 6-minute
+  window) purely for extra ad revenue, with no reward attached.
+  **Important trust difference from Adsgram:** Monetag's SDK confirms ad
+  completion in the browser itself, so the frontend calls
+  `/api/ad/reward` directly once the ad finishes. This is weaker than
+  Adsgram's setup — a technically determined user could in theory call
+  that endpoint without actually watching an ad. Worth revisiting later
+  (e.g. Monetag also supports a server-to-server postback similar to
+  Adsgram's, or add basic rate-limiting/cooldowns per user) once real
+  money is on the line.
 - **Existing balances are preserved** — the backend fills in new fields
   (charges, tasks, etc.) on existing user records without ever touching
   their points, so upgrading the app doesn't reset anyone's progress.
@@ -53,6 +57,9 @@ Tasks (social follows for points), and Airdrop (placeholder for later).
 3. **A place to host the app with HTTPS.** Telegram mini apps refuse to load
    over plain HTTP or localhost — you need a real public HTTPS URL. Easiest
    free/cheap options: Render, Railway, Fly.io, or a VPS with a domain + SSL.
+4. **A free Upstash Redis database** — this is what makes user data (points,
+   charges, etc.) actually persist. Without it, everyone's progress resets
+   every time you redeploy. See step 2 below.
 
 ## Step-by-step setup
 
@@ -60,46 +67,58 @@ Tasks (social follows for points), and Airdrop (placeholder for later).
 - Open Telegram, message **@BotFather**
 - Send `/newbot`, follow the prompts, and save the **bot token** it gives you
 
-### 2. Install dependencies
+### 2. Set up persistent storage (Upstash Redis) — fixes the data-loss bug
+This is what makes everyone's points/charges actually stick around.
+1. Go to **upstash.com**, sign up (free), and create a new **Redis**
+   database. Region doesn't matter much for a small app — pick the
+   closest one.
+2. On the database's page, find the **REST API** section. Copy the two
+   values shown: `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`.
+3. You'll paste these into your `.env` in the next step, and into your
+   hosting provider's environment variables in step 5.
+
+### 3. Install dependencies
 ```bash
 npm install
 ```
 
-### 3. Configure environment variables
+### 4. Configure environment variables
 Copy `.env.example` to `.env` and fill in:
 ```
 BOT_TOKEN=<from BotFather>
-WEBAPP_URL=<your hosted https URL, added after step 4>
+WEBAPP_URL=<your hosted https URL, added after step 5>
+UPSTASH_REDIS_REST_URL=<from step 2>
+UPSTASH_REDIS_REST_TOKEN=<from step 2>
 ```
 
-### 4. Deploy the server
+### 5. Deploy the server
 Push this project to GitHub and connect it to Render/Railway (or any Node
-host). Add `BOT_TOKEN` in your hosting provider's environment variables.
-Once deployed, copy the live HTTPS URL into `WEBAPP_URL` (both locally in
-`.env` and in the provider's env settings).
+host). Add `BOT_TOKEN`, `UPSTASH_REDIS_REST_URL`, and
+`UPSTASH_REDIS_REST_TOKEN` in your hosting provider's environment
+variables — **all three are required**, the server won't start without
+the Redis ones. Once deployed, copy the live HTTPS URL into `WEBAPP_URL`
+(both locally in `.env` and in the provider's env settings).
 
-### 5. Update the bot username in the frontend
+### 6. Update the bot username in the frontend
 In `public/index.html`, change:
 ```js
 const BOT_USERNAME = "your_bot_username";
 ```
 to your actual bot's username (no `@`), so referral links work.
 
-### 6. Point the task buttons at your real links
+### 7. Point the task buttons at your real links
 In `public/index.html`, the Telegram/YouTube/Instagram task rows currently
 just mark themselves "done" on click with no real verification. Add your
 real channel/profile URLs, and see the note below on verifying task
 completion properly before launch.
 
-### 7. Run the bot
+### 8. Run the bot
 ```bash
 npm run bot
 ```
 Keep this running (or deploy it too — bots need to stay online to respond).
 
 ## Before a real launch
-- Swap `db.json` for a real database (Postgres, MongoDB, etc.) — the JSON
-  file will not hold up under concurrent users
 - **Tighten YouTube/Instagram verification.** These currently pay out on
   the honor system (see above). Options if abuse becomes a problem:
   require manual review above a point threshold, use YouTube's Data API

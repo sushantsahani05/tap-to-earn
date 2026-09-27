@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { nanoid } from "nanoid";
-import { getDb } from "./db.js";
+import { getUser, saveUser, getAllUsers, findUserByReferralCode } from "./db.js";
 
 const app = express();
 app.use(cors());
@@ -13,7 +13,7 @@ const POINTS_PER_TAP = 10000;
 const REFERRAL_BONUS = 500000000;
 const TASK_REWARD = 100000000;
 const MAX_CHARGES = 1000;
-const CHARGE_REGEN_PER_SEC = 1; // +1 charge every second
+const CHARGE_REFILL_MS = 60 * 60 * 1000; // full refill 1 hour after charges hit 0
 const AD_REWARD_CHARGES = 500; // charges granted per completed ad view
 const AD_REWARD_POINTS = 1000000; // points granted per completed ad view (points ad)
 
@@ -43,16 +43,16 @@ async function verifyTelegramMembership(userId) {
   }
 }
 
-// Recalculates charges based on time elapsed since the user was last seen,
-// so charges keep regenerating even while the app is closed.
-function regenCharges(user) {
-  const now = Date.now();
-  const last = new Date(user.lastChargeTime).getTime();
-  const elapsedSec = Math.floor((now - last) / 1000);
+// Charges no longer trickle in gradually. Once they hit 0, a 1-hour timer
+// starts (chargesEmptyAt); once that hour passes, charges refill to full
+// all at once. While charges are still above 0, nothing changes here.
+function refillCharges(user) {
+  if (user.charges > 0 || !user.chargesEmptyAt) return user;
 
-  if (elapsedSec > 0 && user.charges < user.maxCharges) {
-    user.charges = Math.min(user.maxCharges, user.charges + elapsedSec * CHARGE_REGEN_PER_SEC);
-    user.lastChargeTime = new Date().toISOString();
+  const emptyAt = new Date(user.chargesEmptyAt).getTime();
+  if (Date.now() - emptyAt >= CHARGE_REFILL_MS) {
+    user.charges = user.maxCharges;
+    user.chargesEmptyAt = null;
   }
   return user;
 }
@@ -62,7 +62,7 @@ function regenCharges(user) {
 function backfillUser(user) {
   if (user.charges === undefined) user.charges = MAX_CHARGES;
   if (user.maxCharges === undefined) user.maxCharges = MAX_CHARGES;
-  if (user.lastChargeTime === undefined) user.lastChargeTime = new Date().toISOString();
+  if (user.chargesEmptyAt === undefined) user.chargesEmptyAt = null;
   if (user.tasks === undefined) {
     user.tasks = { telegram: false, youtube: false, instagram: false };
   }
@@ -75,8 +75,7 @@ app.post("/api/user", async (req, res) => {
   const { userId, referralCode } = req.body;
   if (!userId) return res.status(400).json({ error: "userId required" });
 
-  const db = await getDb();
-  let user = db.data.users[userId];
+  let user = await getUser(userId);
 
   if (!user) {
     user = {
@@ -84,33 +83,31 @@ app.post("/api/user", async (req, res) => {
       points: 0,
       charges: MAX_CHARGES,
       maxCharges: MAX_CHARGES,
-      lastChargeTime: new Date().toISOString(),
+      chargesEmptyAt: null,
       referralCode: nanoid(8),
       referredBy: null,
       referralCount: 0,
       tasks: { telegram: false, youtube: false, instagram: false },
       createdAt: new Date().toISOString(),
     };
-    db.data.users[userId] = user;
 
     // Apply referral bonus if this user arrived via someone's invite link
     if (referralCode) {
-      const referrer = Object.values(db.data.users).find(
-        (u) => u.referralCode === referralCode && u.id !== userId
-      );
+      const referrer = await findUserByReferralCode(referralCode, userId);
       if (referrer) {
         user.referredBy = referrer.id;
         user.points += REFERRAL_BONUS;
         referrer.points += REFERRAL_BONUS;
         referrer.referralCount += 1;
+        await saveUser(referrer);
       }
     }
   } else {
     backfillUser(user);
-    regenCharges(user);
+    refillCharges(user);
   }
 
-  await db.write();
+  await saveUser(user);
   res.json(user);
 });
 
@@ -119,12 +116,11 @@ app.post("/api/tap", async (req, res) => {
   const { userId } = req.body;
   if (!userId) return res.status(400).json({ error: "userId required" });
 
-  const db = await getDb();
-  const user = db.data.users[userId];
+  const user = await getUser(userId);
   if (!user) return res.status(404).json({ error: "user not found" });
 
   backfillUser(user);
-  regenCharges(user);
+  refillCharges(user);
 
   if (user.charges <= 0) {
     return res.status(400).json({ error: "no charges left", user });
@@ -132,7 +128,10 @@ app.post("/api/tap", async (req, res) => {
 
   user.charges -= 1;
   user.points += POINTS_PER_TAP;
-  await db.write();
+  if (user.charges === 0) {
+    user.chargesEmptyAt = new Date().toISOString(); // starts the 1-hour refill timer
+  }
+  await saveUser(user);
 
   res.json(user);
 });
@@ -144,8 +143,7 @@ app.post("/api/task/complete", async (req, res) => {
     return res.status(400).json({ error: "valid userId and task required" });
   }
 
-  const db = await getDb();
-  const user = db.data.users[userId];
+  const user = await getUser(userId);
   if (!user) return res.status(404).json({ error: "user not found" });
 
   backfillUser(user);
@@ -168,42 +166,44 @@ app.post("/api/task/complete", async (req, res) => {
 
   user.tasks[task] = true;
   user.points += TASK_REWARD;
-  await db.write();
+  await saveUser(user);
 
   res.json(user);
 });
 
-// Called by Adsgram's servers (not the browser) after a user finishes
-// watching a rewarded ad. Set this exact URL, with [userId] left as-is,
-// as the "Reward URL" in each Adsgram ad block's settings:
-//   Charges ad block: https://YOUR-DOMAIN/api/ad/reward?userId=[userId]&type=charges
-//   Points ad block:  https://YOUR-DOMAIN/api/ad/reward?userId=[userId]&type=points
+// Grants an ad reward. Used two different ways:
+//  - Adsgram calls this directly from ITS OWN servers (see Reward URL
+//    setup in the README) — safer, since it can't be faked from the browser.
+//  - Monetag's SDK confirms ad completion client-side, so the frontend
+//    calls this endpoint itself right after the ad finishes. This is
+//    weaker (a determined user could call it without watching an ad) —
+//    see the README note on tightening this later.
 app.get("/api/ad/reward", async (req, res) => {
   const { userId, type } = req.query;
   if (!userId) return res.status(400).send("userId required");
 
-  const db = await getDb();
-  const user = db.data.users[userId];
+  const user = await getUser(userId);
   if (!user) return res.status(404).send("user not found");
 
   backfillUser(user);
-  regenCharges(user);
+  refillCharges(user);
 
   if (type === "points") {
     user.points += AD_REWARD_POINTS;
   } else {
     // Default to charges for backward compatibility
     user.charges = Math.min(user.maxCharges, user.charges + AD_REWARD_CHARGES);
+    if (user.charges > 0) user.chargesEmptyAt = null; // no longer empty, cancel the refill timer
   }
 
-  await db.write();
+  await saveUser(user);
   res.status(200).send("OK");
 });
 
 // Simple leaderboard
 app.get("/api/leaderboard", async (req, res) => {
-  const db = await getDb();
-  const top = Object.values(db.data.users)
+  const users = await getAllUsers();
+  const top = users
     .sort((a, b) => b.points - a.points)
     .slice(0, 20)
     .map((u) => ({ id: u.id, points: u.points }));

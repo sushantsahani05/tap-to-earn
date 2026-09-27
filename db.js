@@ -1,21 +1,33 @@
-// Lightweight JSON-file database — no native compilation needed.
-// Good for prototyping. Swap for Postgres/Mongo once you have real traffic.
-import { JSONFilePreset } from "lowdb/node";
+// Persistent storage using Upstash Redis (a free, HTTP-based Redis host).
+// Unlike the old JSON-file version, this survives redeploys/restarts on
+// Render, since the data lives in Upstash's cloud, not on Render's disk.
+import { Redis } from "@upstash/redis";
 
-const defaultData = { users: {} };
+const redis = Redis.fromEnv(); // reads UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN
 
-export async function getDb() {
-  const db = await JSONFilePreset("db.json", defaultData);
-  return db;
+const USER_IDS_KEY = "user_ids"; // a Redis set holding every known userId
+
+function userKey(userId) {
+  return `user:${userId}`;
 }
 
-// Shape of a user record:
-// {
-//   id: "telegram_user_id",
-//   points: 0,
-//   taps: 0,
-//   referralCode: "abc123",
-//   referredBy: "other_user_id" | null,
-//   referralCount: 0,
-//   createdAt: ISOString
-// }
+export async function getUser(userId) {
+  return await redis.get(userKey(userId)); // returns null if not found
+}
+
+export async function saveUser(user) {
+  await redis.set(userKey(user.id), user);
+  await redis.sadd(USER_IDS_KEY, user.id);
+}
+
+export async function getAllUsers() {
+  const ids = await redis.smembers(USER_IDS_KEY);
+  if (!ids.length) return [];
+  const users = await redis.mget(...ids.map(userKey));
+  return users.filter(Boolean);
+}
+
+export async function findUserByReferralCode(code, excludeId) {
+  const users = await getAllUsers();
+  return users.find((u) => u.referralCode === code && u.id !== excludeId);
+}

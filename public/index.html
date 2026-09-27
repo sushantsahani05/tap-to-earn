@@ -6,7 +6,7 @@
 <title>Tap to Earn</title>
 <link rel="icon" href="/tap-icon.png" />
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="https://sad.adsgram.ai/js/sad.min.js"></script>
+<script src="//libtl.com/sdk.js" data-zone="11909132" data-sdk="show_11909132"></script>
 <style>
   :root {
     --bg: #0f1115;
@@ -51,22 +51,48 @@
   }
   .charges-bar-fill { height: 100%; background: var(--accent); transition: width 0.3s ease; }
 
+  .tap-button-wrap { position: relative; width: 190px; height: 190px; }
   .tap-button {
     width: 190px;
     height: 190px;
     border-radius: 50%;
     background: radial-gradient(circle at 30% 30%, #5eead4, #14b8a6);
-    border: none;
+    background-image: url('/tap-icon.png');
+    background-size: cover;
+    background-position: center;
+    border: 4px solid var(--accent);
     box-shadow: 0 8px 24px rgba(20, 184, 166, 0.4);
-    font-size: 20px;
-    font-weight: 700;
-    color: #04231f;
+    font-size: 0; /* hide any leftover text, image speaks for itself */
     cursor: pointer;
     user-select: none;
-    transition: transform 0.08s ease;
+    transition: transform 0.08s ease, box-shadow 0.08s ease;
   }
-  .tap-button:active { transform: scale(0.93); }
+  .tap-button:active,
+  .tap-button.tapping {
+    transform: scale(0.9);
+    box-shadow: 0 4px 14px rgba(20, 184, 166, 0.25);
+  }
   .tap-button:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+
+  /* Floating "+10,000" text that pops up on each tap */
+  @keyframes floatUp {
+    0%   { transform: translate(-50%, 0); opacity: 1; }
+    100% { transform: translate(-50%, -70px); opacity: 0; }
+  }
+  .float-points {
+    position: absolute;
+    left: 50%;
+    top: 20%;
+    transform: translate(-50%, 0);
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--accent);
+    pointer-events: none;
+    animation: floatUp 0.8s ease-out forwards;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.5);
+  }
+
+  .charges-empty-note { font-size: 12px; color: var(--muted); margin-top: 10px; text-align: center; }
 
   .card {
     width: 100%;
@@ -167,13 +193,16 @@
     </div>
     <div class="charges-bar-track"><div class="charges-bar-fill" id="chargesBar" style="width:100%"></div></div>
 
-    <button class="tap-button" id="tapBtn">TAP<br />+10,000</button>
+    <div class="tap-button-wrap">
+      <button class="tap-button" id="tapBtn" aria-label="Tap to earn"></button>
+    </div>
+    <div class="charges-empty-note" id="refillNote" style="display:none;"></div>
 
-    <button class="btn secondary" id="watchAdChargesBtn" style="max-width:360px; margin-top:20px;">
-      📺 Watch Ad for +500 Charges
+    <button class="btn secondary" id="monetagChargesBtn" style="max-width:360px; margin-top:20px;">
+      🎬 Watch Ad (Monetag) for +500 Charges
     </button>
-    <button class="btn secondary" id="watchAdPointsBtn" style="max-width:360px; margin-top:10px;">
-      📺 Watch Ad for +1,000,000 Points
+    <button class="btn secondary" id="monetagPointsBtn" style="max-width:360px; margin-top:10px;">
+      🎬 Watch Ad (Monetag) for +1,000,000 Points
     </button>
   </section>
 
@@ -247,6 +276,8 @@
   const chargesLabelEl = document.getElementById("chargesLabel");
   const chargesBarEl = document.getElementById("chargesBar");
   const tapBtn = document.getElementById("tapBtn");
+  const tapBtnWrap = document.querySelector(".tap-button-wrap");
+  const refillNoteEl = document.getElementById("refillNote");
   const refLinkEl = document.getElementById("refLink");
   const referralsEl = document.getElementById("referrals");
 
@@ -258,6 +289,12 @@
     chargesLabelEl.textContent = `${currentUser.charges} / ${currentUser.maxCharges}`;
     chargesBarEl.style.width = `${(currentUser.charges / currentUser.maxCharges) * 100}%`;
     tapBtn.disabled = currentUser.charges <= 0;
+
+    if (currentUser.charges <= 0 && currentUser.chargesEmptyAt) {
+      refillNoteEl.style.display = "block";
+    } else {
+      refillNoteEl.style.display = "none";
+    }
 
     referralsEl.textContent = currentUser.referralCount;
     refLinkEl.textContent = `https://t.me/${BOT_USERNAME}?start=${currentUser.referralCode}`;
@@ -285,9 +322,41 @@
     render();
   }
 
+  // Ticks every second to count down "Refills in 42:10" without hitting
+  // the server — once the hour is up, it asks the server to confirm.
+  setInterval(() => {
+    if (!currentUser || currentUser.charges > 0 || !currentUser.chargesEmptyAt) return;
+    const targetMs = new Date(currentUser.chargesEmptyAt).getTime() + 60 * 60 * 1000;
+    const remainingMs = targetMs - Date.now();
+
+    if (remainingMs <= 0) {
+      loadUser(); // time's up — fetch the real refilled state
+      return;
+    }
+    const mins = Math.floor(remainingMs / 60000);
+    const secs = Math.floor((remainingMs % 60000) / 1000);
+    refillNoteEl.textContent = `Refills in ${mins}:${secs.toString().padStart(2, "0")}`;
+  }, 1000);
+
+  function showFloatingPoints() {
+    const el = document.createElement("div");
+    el.className = "float-points";
+    el.textContent = "+10,000";
+    // Slight random horizontal drift so repeated taps don't stack exactly
+    el.style.left = `${50 + (Math.random() * 20 - 10)}%`;
+    tapBtnWrap.appendChild(el);
+    setTimeout(() => el.remove(), 800);
+  }
+
   tapBtn.addEventListener("click", async () => {
     if (currentUser && currentUser.charges <= 0) return;
     tg?.HapticFeedback?.impactOccurred("light");
+
+    // Instant visual feedback, independent of the network request
+    tapBtn.classList.add("tapping");
+    setTimeout(() => tapBtn.classList.remove("tapping"), 100);
+    showFloatingPoints();
+
     const res = await fetch(`${API_BASE}/api/tap`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -360,38 +429,49 @@
 
   loadUser();
 
-  // --- Adsgram rewarded ads ---
-  // Each button uses its own Adsgram ad block (own Block ID + own Reward
-  // URL with a different `type` so the backend knows what to grant).
-  // Replace both with your real Block IDs from the Adsgram dashboard.
-  const ADSGRAM_CHARGES_BLOCK_ID = "your-charges-block-id";
-  const ADSGRAM_POINTS_BLOCK_ID = "your-points-block-id";
+  // --- Monetag rewarded ads ---
+  // Calls the same /api/ad/reward endpoint directly from the browser,
+  // since Monetag confirms completion client-side (see server.js note).
+  async function claimAdReward(type) {
+    await fetch(`${API_BASE}/api/ad/reward?userId=${encodeURIComponent(userId)}&type=${type}`);
+    await loadUser();
+  }
 
-  const ChargesAdController = window.Adsgram?.init({ blockId: ADSGRAM_CHARGES_BLOCK_ID });
-  const PointsAdController = window.Adsgram?.init({ blockId: ADSGRAM_POINTS_BLOCK_ID });
-
-  function wireAdButton(buttonId, controller) {
+  function wireMonetagButton(buttonId, format, rewardType) {
     document.getElementById(buttonId).addEventListener("click", () => {
-      if (!controller) {
+      if (typeof window.show_11909132 !== "function") {
         alert("Ads aren't set up yet.");
         return;
       }
-      controller
-        .show()
-        .then(() => {
-          // Ad watched successfully. Adsgram's own servers call your
-          // /api/ad/reward endpoint directly, so we just refresh shortly
-          // after to reflect the reward once that lands.
-          setTimeout(loadUser, 1500);
-        })
+      const showAd = format ? window.show_11909132(format) : window.show_11909132();
+      showAd
+        .then(() => claimAdReward(rewardType))
         .catch(() => {
-          // User closed/skipped the ad, or it failed to load — no reward.
+          // Ad failed to load, or was closed early — no reward.
         });
     });
   }
 
-  wireAdButton("watchAdChargesBtn", ChargesAdController);
-  wireAdButton("watchAdPointsBtn", PointsAdController);
+  // Rewarded Interstitial (full-screen) → charges
+  wireMonetagButton("monetagChargesBtn", undefined, "charges");
+  // Rewarded Popup → points
+  wireMonetagButton("monetagPointsBtn", "pop", "points");
+
+  // In-App Interstitial — shows automatically in the background for extra
+  // ad revenue, no reward tied to it. Settings as given by Monetag:
+  // up to 2 ads within 6 minutes, 30s apart, first one after a 5s delay.
+  if (typeof window.show_11909132 === "function") {
+    window.show_11909132({
+      type: "inApp",
+      inAppSettings: {
+        frequency: 2,
+        capping: 0.1,
+        interval: 30,
+        timeout: 5,
+        everyPage: false,
+      },
+    });
+  }
 </script>
 </body>
 </html>
