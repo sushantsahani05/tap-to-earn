@@ -10,12 +10,36 @@ app.use(express.json());
 app.use(express.static("public"));
 
 const POINTS_PER_TAP = 10000;
-const REFERRAL_BONUS = 5000000;
-const TASK_REWARD = 1000000;
+const REFERRAL_BONUS = 500000000;
+const TASK_REWARD = 100000000;
 const MAX_CHARGES = 1000;
 const CHARGE_REGEN_PER_SEC = 1; // +1 charge every second
 
 const TASK_KEYS = ["telegram", "youtube", "instagram"];
+const TELEGRAM_CHANNEL = "@bakicoins"; // used to verify channel membership
+
+// Checks whether a user has actually joined the Telegram channel, using
+// the Bot API. Returns true/false. The bot must be a member of the
+// channel (it can just be added like any subscriber) for this to work.
+async function verifyTelegramMembership(userId) {
+  const token = process.env.BOT_TOKEN;
+  if (!token) return false;
+
+  try {
+    const url = `https://api.telegram.org/bot${token}/getChatMember?chat_id=${encodeURIComponent(
+      TELEGRAM_CHANNEL
+    )}&user_id=${encodeURIComponent(userId)}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!data.ok) return false;
+
+    const status = data.result?.status;
+    return ["member", "administrator", "creator"].includes(status);
+  } catch (err) {
+    console.error("Telegram membership check failed:", err);
+    return false;
+  }
+}
 
 // Recalculates charges based on time elapsed since the user was last seen,
 // so charges keep regenerating even while the app is closed.
@@ -126,6 +150,18 @@ app.post("/api/task/complete", async (req, res) => {
 
   if (user.tasks[task]) {
     return res.status(400).json({ error: "task already completed", user });
+  }
+
+  // Telegram membership can actually be checked. YouTube/Instagram can't be
+  // verified for free, so those are honor-system for now (see README).
+  if (task === "telegram") {
+    const joined = await verifyTelegramMembership(userId);
+    if (!joined) {
+      return res.status(400).json({
+        error: "You need to join the channel first, then tap Verify again.",
+        user,
+      });
+    }
   }
 
   user.tasks[task] = true;

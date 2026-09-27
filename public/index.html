@@ -172,7 +172,7 @@
   <!-- REFER -->
   <section class="screen" id="screen-refer">
     <div class="card">
-      <p class="label">Referral link — you both get +5,000,000 points</p>
+      <p class="label">Referral link — you both get +500,000,000 points</p>
       <div class="referral-code" id="refLink">loading...</div>
       <button class="btn" id="copyBtn">Copy</button>
       <button class="btn secondary" id="shareBtn">Telegram share</button>
@@ -183,24 +183,24 @@
   <!-- TASKS -->
   <section class="screen" id="screen-tasks">
     <div class="card" style="max-width:360px; width:100%;">
-      <div class="task-row" data-task="telegram">
+      <div class="task-row" data-task="telegram" data-task-url="https://t.me/bakicoins">
         <div class="task-info">
           <div class="name">Join Telegram channel</div>
-          <div class="reward">+1,000,000 points</div>
+          <div class="reward">+100,000,000 points</div>
         </div>
         <button class="task-btn" data-task-btn="telegram">Go</button>
       </div>
-      <div class="task-row" data-task="youtube">
+      <div class="task-row" data-task="youtube" data-task-url="https://www.youtube.com/channel/UCAxgc3IaAAqcvVbv5M68-4w">
         <div class="task-info">
           <div class="name">Subscribe on YouTube</div>
-          <div class="reward">+1,000,000 points</div>
+          <div class="reward">+100,000,000 points</div>
         </div>
         <button class="task-btn" data-task-btn="youtube">Go</button>
       </div>
-      <div class="task-row" data-task="instagram">
+      <div class="task-row" data-task="instagram" data-task-url="">
         <div class="task-info">
           <div class="name">Follow on Instagram</div>
-          <div class="reward">+1,000,000 points</div>
+          <div class="reward">+100,000,000 points</div>
         </div>
         <button class="task-btn" data-task-btn="instagram">Go</button>
       </div>
@@ -259,7 +259,8 @@
       if (currentUser.tasks?.[key]) {
         btn.textContent = "Done";
         btn.classList.add("done");
-      } else {
+      } else if (btn.textContent !== "Verify") {
+        // Only reset to "Go" if the user hasn't already clicked Go this session
         btn.textContent = "Go";
         btn.classList.remove("done");
       }
@@ -300,16 +301,38 @@
   });
 
   document.querySelectorAll("[data-task-btn]").forEach((btn) => {
+    const task = btn.getAttribute("data-task-btn");
+    const row = document.querySelector(`[data-task="${task}"]`);
+    const url = row?.getAttribute("data-task-url");
+
     btn.addEventListener("click", async () => {
-      const task = btn.getAttribute("data-task-btn");
       if (currentUser?.tasks?.[task]) return; // already done
+
+      // First click: open the link, switch this button to "Verify"
+      if (btn.textContent === "Go") {
+        if (url) {
+          tg?.openLink ? tg.openLink(url) : window.open(url, "_blank");
+        }
+        btn.textContent = "Verify";
+        return;
+      }
+
+      // Second click: ask the backend to confirm and pay out
       const res = await fetch(`${API_BASE}/api/task/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId, task }),
       });
       const data = await res.json();
-      currentUser = data.user || data;
+
+      if (!res.ok) {
+        alert(data.error || "Couldn't verify yet — make sure you completed the step first.");
+        currentUser = data.user || currentUser;
+        render();
+        return;
+      }
+
+      currentUser = data;
       render();
     });
   });
