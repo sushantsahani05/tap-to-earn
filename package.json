@@ -1,7 +1,7 @@
 {
   "name": "telegram-tap-to-earn",
   "version": "1.0.0",
-  "description": "Telegram tap-to-earn bot + mini app",
+  "description": "Starter Telegram tap-to-earn bot + mini app",
   "main": "server.js",
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "cors": "^2.8.5",
-    "dotenv": "^16.6.1",
+    "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "lowdb": "^7.0.1",
     "nanoid": "^5.0.7",

@@ -5,129 +5,145 @@ import { nanoid } from "nanoid";
 import { getDb } from "./db.js";
 
 const app = express();
-
 app.use(cors());
 app.use(express.json());
 app.use(express.static("public"));
 
-const POINTS_PER_TAP = 1;
-const REFERRAL_BONUS = 50;
+const POINTS_PER_TAP = 10000;
+const REFERRAL_BONUS = 5000000;
+const TASK_REWARD = 1000000;
+const MAX_CHARGES = 1000;
+const CHARGE_REGEN_PER_SEC = 1; // +1 charge every second
 
-// Create/get user
+const TASK_KEYS = ["telegram", "youtube", "instagram"];
+
+// Recalculates charges based on time elapsed since the user was last seen,
+// so charges keep regenerating even while the app is closed.
+function regenCharges(user) {
+  const now = Date.now();
+  const last = new Date(user.lastChargeTime).getTime();
+  const elapsedSec = Math.floor((now - last) / 1000);
+
+  if (elapsedSec > 0 && user.charges < user.maxCharges) {
+    user.charges = Math.min(user.maxCharges, user.charges + elapsedSec * CHARGE_REGEN_PER_SEC);
+    user.lastChargeTime = new Date().toISOString();
+  }
+  return user;
+}
+
+// Fills in any new fields on an existing user record without touching
+// their points/balance — so upgrading the app never wipes progress.
+function backfillUser(user) {
+  if (user.charges === undefined) user.charges = MAX_CHARGES;
+  if (user.maxCharges === undefined) user.maxCharges = MAX_CHARGES;
+  if (user.lastChargeTime === undefined) user.lastChargeTime = new Date().toISOString();
+  if (user.tasks === undefined) {
+    user.tasks = { telegram: false, youtube: false, instagram: false };
+  }
+  if (user.referralCount === undefined) user.referralCount = 0;
+  return user;
+}
+
+// Get or create a user. Called when the mini app first loads.
 app.post("/api/user", async (req, res) => {
-  try {
-    const { telegramId, username, referrerId } = req.body;
+  const { userId, referralCode } = req.body;
+  if (!userId) return res.status(400).json({ error: "userId required" });
 
-    if (!telegramId) {
-      return res.status(400).json({ error: "telegramId is required" });
-    }
+  const db = await getDb();
+  let user = db.data.users[userId];
 
-    const db = await getDb();
+  if (!user) {
+    user = {
+      id: userId,
+      points: 0,
+      charges: MAX_CHARGES,
+      maxCharges: MAX_CHARGES,
+      lastChargeTime: new Date().toISOString(),
+      referralCode: nanoid(8),
+      referredBy: null,
+      referralCount: 0,
+      tasks: { telegram: false, youtube: false, instagram: false },
+      createdAt: new Date().toISOString(),
+    };
+    db.data.users[userId] = user;
 
-    let user = db.data.users.find(
-      (u) => String(u.telegramId) === String(telegramId)
-    );
-
-    if (!user) {
-      user = {
-        id: nanoid(),
-        telegramId: String(telegramId),
-        username: username || "",
-        points: 0,
-        taps: 0,
-        referrals: 0,
-        referredBy: null,
-        createdAt: new Date().toISOString()
-      };
-
-      // Referral bonus
-      if (
-        referrerId &&
-        String(referrerId) !== String(telegramId)
-      ) {
-        const referrer = db.data.users.find(
-          (u) => String(u.telegramId) === String(referrerId)
-        );
-
-        if (referrer) {
-          user.referredBy = String(referrerId);
-          referrer.points += REFERRAL_BONUS;
-          referrer.referrals += 1;
-        }
+    // Apply referral bonus if this user arrived via someone's invite link
+    if (referralCode) {
+      const referrer = Object.values(db.data.users).find(
+        (u) => u.referralCode === referralCode && u.id !== userId
+      );
+      if (referrer) {
+        user.referredBy = referrer.id;
+        user.points += REFERRAL_BONUS;
+        referrer.points += REFERRAL_BONUS;
+        referrer.referralCount += 1;
       }
-
-      db.data.users.push(user);
-      await db.write();
     }
-
-    res.json({
-      success: true,
-      user
-    });
-  } catch (error) {
-    console.error("User error:", error);
-    res.status(500).json({ error: "Server error" });
+  } else {
+    backfillUser(user);
+    regenCharges(user);
   }
+
+  await db.write();
+  res.json(user);
 });
 
-// Tap
+// Register a tap — costs 1 charge, pays out points
 app.post("/api/tap", async (req, res) => {
-  try {
-    const { telegramId } = req.body;
+  const { userId } = req.body;
+  if (!userId) return res.status(400).json({ error: "userId required" });
 
-    if (!telegramId) {
-      return res.status(400).json({ error: "telegramId is required" });
-    }
+  const db = await getDb();
+  const user = db.data.users[userId];
+  if (!user) return res.status(404).json({ error: "user not found" });
 
-    const db = await getDb();
+  backfillUser(user);
+  regenCharges(user);
 
-    const user = db.data.users.find(
-      (u) => String(u.telegramId) === String(telegramId)
-    );
-
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    user.points += POINTS_PER_TAP;
-    user.taps += 1;
-
-    await db.write();
-
-    res.json({
-      success: true,
-      points: user.points,
-      taps: user.taps
-    });
-  } catch (error) {
-    console.error("Tap error:", error);
-    res.status(500).json({ error: "Server error" });
+  if (user.charges <= 0) {
+    return res.status(400).json({ error: "no charges left", user });
   }
+
+  user.charges -= 1;
+  user.points += POINTS_PER_TAP;
+  await db.write();
+
+  res.json(user);
 });
 
-// Leaderboard
-app.get("/api/leaderboard", async (req, res) => {
-  try {
-    const db = await getDb();
-
-    const leaderboard = [...db.data.users]
-      .sort((a, b) => b.points - a.points)
-      .slice(0, 20)
-      .map((user, index) => ({
-        rank: index + 1,
-        username: user.username || "Anonymous",
-        points: user.points
-      }));
-
-    res.json(leaderboard);
-  } catch (error) {
-    console.error("Leaderboard error:", error);
-    res.status(500).json({ error: "Server error" });
+// Mark a task complete and pay out its reward (once per task)
+app.post("/api/task/complete", async (req, res) => {
+  const { userId, task } = req.body;
+  if (!userId || !TASK_KEYS.includes(task)) {
+    return res.status(400).json({ error: "valid userId and task required" });
   }
+
+  const db = await getDb();
+  const user = db.data.users[userId];
+  if (!user) return res.status(404).json({ error: "user not found" });
+
+  backfillUser(user);
+
+  if (user.tasks[task]) {
+    return res.status(400).json({ error: "task already completed", user });
+  }
+
+  user.tasks[task] = true;
+  user.points += TASK_REWARD;
+  await db.write();
+
+  res.json(user);
+});
+
+// Simple leaderboard
+app.get("/api/leaderboard", async (req, res) => {
+  const db = await getDb();
+  const top = Object.values(db.data.users)
+    .sort((a, b) => b.points - a.points)
+    .slice(0, 20)
+    .map((u) => ({ id: u.id, points: u.points }));
+  res.json(top);
 });
 
 const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

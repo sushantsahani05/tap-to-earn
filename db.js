@@ -8,3 +8,14 @@ export async function getDb() {
   const db = await JSONFilePreset("db.json", defaultData);
   return db;
 }
+
+// Shape of a user record:
+// {
+//   id: "telegram_user_id",
+//   points: 0,
+//   taps: 0,
+//   referralCode: "abc123",
+//   referredBy: "other_user_id" | null,
+//   referralCount: 0,
+//   createdAt: ISOString
+// }

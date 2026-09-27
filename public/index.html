@@ -4,8 +4,8 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Tap to Earn</title>
+<link rel="icon" href="/tap-icon.png" />
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-
 <style>
   :root {
     --bg: #0f1115;
@@ -14,62 +14,58 @@
     --text: #f5f5f5;
     --muted: #9aa0a6;
   }
-
-  * {
-    box-sizing: border-box;
-  }
-
+  * { box-sizing: border-box; }
   body {
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     background: var(--bg);
     color: var(--text);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 24px 16px 40px;
     min-height: 100vh;
+    padding-bottom: 76px; /* leave room for bottom nav */
   }
+  .screen { display: none; flex-direction: column; align-items: center; padding: 24px 16px 16px; }
+  .screen.active { display: flex; }
 
-  h1 {
-    font-size: 18px;
+  .app-logo { width: 56px; height: 56px; border-radius: 14px; object-fit: cover; }
+  h1 { font-size: 15px; color: var(--muted); font-weight: 500; margin: 4px 0 0; }
+  .points { font-size: 40px; font-weight: 700; margin: 6px 0 18px; color: var(--accent); }
+
+  .charges-row {
+    width: 100%;
+    max-width: 360px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
     color: var(--muted);
-    font-weight: 500;
-    margin: 4px 0 0;
+    margin-bottom: 14px;
   }
-
-  .points {
-    font-size: 48px;
-    font-weight: 700;
-    margin: 8px 0 24px;
-    color: var(--accent);
-  }
-
-  /* TAP BUTTON */
-  .tap-button {
-    width: 220px;
-    height: 220px;
-    padding: 0;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    border-radius: 50%;
+  .charges-bar-track {
+    width: 100%;
+    max-width: 360px;
+    height: 8px;
+    background: #23262f;
+    border-radius: 4px;
     overflow: hidden;
+    margin-bottom: 20px;
+  }
+  .charges-bar-fill { height: 100%; background: var(--accent); transition: width 0.3s ease; }
+
+  .tap-button {
+    width: 190px;
+    height: 190px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #5eead4, #14b8a6);
+    border: none;
+    box-shadow: 0 8px 24px rgba(20, 184, 166, 0.4);
+    font-size: 20px;
+    font-weight: 700;
+    color: #04231f;
+    cursor: pointer;
+    user-select: none;
     transition: transform 0.08s ease;
   }
-
-  .tap-button img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    display: block;
-    user-select: none;
-    -webkit-user-drag: none;
-  }
-
-  .tap-button:active {
-    transform: scale(0.92);
-  }
+  .tap-button:active { transform: scale(0.93); }
+  .tap-button:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
 
   .card {
     width: 100%;
@@ -77,26 +73,19 @@
     background: var(--card);
     border-radius: 14px;
     padding: 16px;
-    margin-top: 24px;
+    margin-top: 16px;
   }
-
-  .card p {
-    margin: 0 0 8px;
-    color: var(--muted);
-    font-size: 13px;
-  }
-
+  .card p.label { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
   .referral-code {
     font-family: monospace;
-    font-size: 16px;
+    font-size: 14px;
     background: #10131a;
     padding: 10px 12px;
     border-radius: 8px;
     word-break: break-all;
   }
-
-  .share-btn {
-    margin-top: 12px;
+  .btn {
+    margin-top: 10px;
     width: 100%;
     padding: 12px;
     border-radius: 10px;
@@ -106,370 +95,239 @@
     font-weight: 700;
     cursor: pointer;
   }
+  .btn.secondary { background: #23262f; color: var(--text); }
+  .stat-row { display: flex; justify-content: space-between; margin-top: 6px; font-size: 13px; }
 
-  .stat-row {
+  .task-row {
     display: flex;
+    align-items: center;
     justify-content: space-between;
-    margin-top: 6px;
-    font-size: 13px;
+    padding: 12px 0;
+    border-bottom: 1px solid #23262f;
   }
-
-  .chat-card {
-    display: flex;
-    flex-direction: column;
-    height: 320px;
-  }
-
-  .chat-log {
-    flex: 1;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-bottom: 10px;
-    padding-right: 2px;
-  }
-
-  .msg {
-    max-width: 85%;
-    padding: 8px 12px;
-    border-radius: 12px;
-    font-size: 14px;
-    line-height: 1.4;
-  }
-
-  .msg.user {
-    align-self: flex-end;
-    background: var(--accent);
-    color: #04231f;
-  }
-
-  .msg.assistant {
-    align-self: flex-start;
-    background: #10131a;
-    color: var(--text);
-  }
-
-  .chat-input-row {
-    display: flex;
-    gap: 8px;
-  }
-
-  .chat-input-row input {
-    flex: 1;
-    padding: 10px 12px;
-    border-radius: 10px;
-    border: 1px solid #2a2e37;
-    background: #10131a;
-    color: var(--text);
-    font-size: 14px;
-  }
-
-  .chat-input-row button {
-    padding: 10px 16px;
-    border-radius: 10px;
+  .task-row:last-child { border-bottom: none; }
+  .task-info .name { font-weight: 600; font-size: 14px; }
+  .task-info .reward { font-size: 12px; color: var(--muted); }
+  .task-btn {
+    padding: 8px 14px;
+    border-radius: 8px;
     border: none;
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
     background: var(--accent);
     color: #04231f;
-    font-weight: 700;
-    cursor: pointer;
   }
+  .task-btn.done { background: #23262f; color: var(--muted); cursor: default; }
+
+  .airdrop-box {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+  }
+  .airdrop-box .emoji { font-size: 42px; display: block; margin-bottom: 12px; }
+
+  nav.bottom-nav {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    display: flex;
+    background: var(--card);
+    border-top: 1px solid #23262f;
+    padding: 8px 0 calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+  nav.bottom-nav button {
+    flex: 1;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 11px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    padding: 4px 0;
+  }
+  nav.bottom-nav button .icon { font-size: 20px; }
+  nav.bottom-nav button.active { color: var(--accent); }
 </style>
 </head>
-
 <body>
 
-  <h1>Your balance</h1>
+  <!-- HOME -->
+  <section class="screen active" id="screen-home">
+    <img class="app-logo" src="/tap-icon.png" alt="App icon" />
+    <h1>Your balance</h1>
+    <div class="points" id="points">0</div>
 
-  <div class="points" id="points">0</div>
-
-  <!-- YOUR TAP ICON -->
-  <button class="tap-button" id="tapBtn">
-    <img src="tap-icon.png" alt="Tap">
-  </button>
-
-  <div class="card">
-    <p>Invite friends — you both get bonus points</p>
-
-    <div class="referral-code" id="refLink">
-      loading...
+    <div class="charges-row">
+      <span>Charges</span>
+      <span id="chargesLabel">1000 / 1000</span>
     </div>
+    <div class="charges-bar-track"><div class="charges-bar-fill" id="chargesBar" style="width:100%"></div></div>
 
-    <button class="share-btn" id="shareBtn">
-      Share invite link
-    </button>
+    <button class="tap-button" id="tapBtn">TAP<br />+10,000</button>
+  </section>
 
-    <div class="stat-row">
-      <span>Total taps</span>
-      <span id="taps">0</span>
+  <!-- REFER -->
+  <section class="screen" id="screen-refer">
+    <div class="card">
+      <p class="label">Referral link — you both get +5,000,000 points</p>
+      <div class="referral-code" id="refLink">loading...</div>
+      <button class="btn" id="copyBtn">Copy</button>
+      <button class="btn secondary" id="shareBtn">Telegram share</button>
+      <div class="stat-row"><span>Friends invited</span><span id="referrals">0</span></div>
     </div>
+  </section>
 
-    <div class="stat-row">
-      <span>Friends invited</span>
-      <span id="referrals">0</span>
+  <!-- TASKS -->
+  <section class="screen" id="screen-tasks">
+    <div class="card" style="max-width:360px; width:100%;">
+      <div class="task-row" data-task="telegram">
+        <div class="task-info">
+          <div class="name">Join Telegram channel</div>
+          <div class="reward">+1,000,000 points</div>
+        </div>
+        <button class="task-btn" data-task-btn="telegram">Go</button>
+      </div>
+      <div class="task-row" data-task="youtube">
+        <div class="task-info">
+          <div class="name">Subscribe on YouTube</div>
+          <div class="reward">+1,000,000 points</div>
+        </div>
+        <button class="task-btn" data-task-btn="youtube">Go</button>
+      </div>
+      <div class="task-row" data-task="instagram">
+        <div class="task-info">
+          <div class="name">Follow on Instagram</div>
+          <div class="reward">+1,000,000 points</div>
+        </div>
+        <button class="task-btn" data-task-btn="instagram">Go</button>
+      </div>
     </div>
-  </div>
+  </section>
 
-  <div class="card chat-card">
-
-    <p>Ask the assistant</p>
-
-    <div class="chat-log" id="chatLog"></div>
-
-    <div class="chat-input-row">
-      <input
-        id="chatInput"
-        type="text"
-        placeholder="Ask about points, referrals..."
-      />
-
-      <button id="chatSend">
-        Send
-      </button>
+  <!-- AIRDROP -->
+  <section class="screen" id="screen-airdrop">
+    <div class="airdrop-box">
+      <span class="emoji">🎁</span>
+      Airdrop — Coming Soon
     </div>
+  </section>
 
-  </div>
+  <nav class="bottom-nav">
+    <button data-screen="home" class="active"><span class="icon">🏠</span>Home</button>
+    <button data-screen="refer"><span class="icon">👥</span>Refer</button>
+    <button data-screen="tasks"><span class="icon">✅</span>Tasks</button>
+    <button data-screen="airdrop"><span class="icon">🎁</span>Airdrop</button>
+  </nav>
 
 <script>
-
   const tg = window.Telegram?.WebApp;
-
   tg?.ready();
   tg?.expand();
 
-  // BOTNAME must match your bot's @username (no @)
-  // for invite links to work.
+  // Must match your bot's @username (no @) for invite links to work.
   const BOT_USERNAME = "your_bot_username";
+  const API_BASE = ""; // same origin as this page
 
-  // Same server as this page
-  const API_BASE = "";
+  const userId = tg?.initDataUnsafe?.user?.id?.toString() || "demo-user";
+  const params = new URLSearchParams(window.location.search);
+  const referralCode = params.get("ref");
 
-  const userId =
-    tg?.initDataUnsafe?.user?.id?.toString() || "demo-user";
-
-  const params =
-    new URLSearchParams(window.location.search);
-
-  const referralCode =
-    params.get("ref");
-
-  const pointsEl =
-    document.getElementById("points");
-
-  const tapsEl =
-    document.getElementById("taps");
-
-  const referralsEl =
-    document.getElementById("referrals");
-
-  const refLinkEl =
-    document.getElementById("refLink");
+  const pointsEl = document.getElementById("points");
+  const chargesLabelEl = document.getElementById("chargesLabel");
+  const chargesBarEl = document.getElementById("chargesBar");
+  const tapBtn = document.getElementById("tapBtn");
+  const refLinkEl = document.getElementById("refLink");
+  const referralsEl = document.getElementById("referrals");
 
   let currentUser = null;
 
+  function render() {
+    if (!currentUser) return;
+    pointsEl.textContent = currentUser.points.toLocaleString();
+    chargesLabelEl.textContent = `${currentUser.charges} / ${currentUser.maxCharges}`;
+    chargesBarEl.style.width = `${(currentUser.charges / currentUser.maxCharges) * 100}%`;
+    tapBtn.disabled = currentUser.charges <= 0;
 
-  /* LOAD USER */
+    referralsEl.textContent = currentUser.referralCount;
+    refLinkEl.textContent = `https://t.me/${BOT_USERNAME}?start=${currentUser.referralCode}`;
+
+    for (const key of ["telegram", "youtube", "instagram"]) {
+      const btn = document.querySelector(`[data-task-btn="${key}"]`);
+      if (currentUser.tasks?.[key]) {
+        btn.textContent = "Done";
+        btn.classList.add("done");
+      } else {
+        btn.textContent = "Go";
+        btn.classList.remove("done");
+      }
+    }
+  }
 
   async function loadUser() {
-
     const res = await fetch(`${API_BASE}/api/user`, {
-
       method: "POST",
-
-      headers: {
-        "Content-Type": "application/json"
-      },
-
-      body: JSON.stringify({
-        userId,
-        referralCode
-      })
-
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, referralCode }),
     });
-
     currentUser = await res.json();
-
     render();
   }
 
+  tapBtn.addEventListener("click", async () => {
+    if (currentUser && currentUser.charges <= 0) return;
+    tg?.HapticFeedback?.impactOccurred("light");
+    const res = await fetch(`${API_BASE}/api/tap`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId }),
+    });
+    const data = await res.json();
+    currentUser = data.user || data; // error responses include user too
+    render();
+  });
 
-  /* UPDATE SCREEN */
+  document.getElementById("copyBtn").addEventListener("click", () => {
+    navigator.clipboard.writeText(refLinkEl.textContent);
+  });
 
-  function render() {
+  document.getElementById("shareBtn").addEventListener("click", () => {
+    const link = refLinkEl.textContent;
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Join me and earn points!")}`;
+    tg?.openTelegramLink ? tg.openTelegramLink(shareUrl) : window.open(shareUrl, "_blank");
+  });
 
-    pointsEl.textContent =
-      currentUser.points;
-
-    tapsEl.textContent =
-      currentUser.taps;
-
-    referralsEl.textContent =
-      currentUser.referralCount;
-
-    refLinkEl.textContent =
-      `https://t.me/${BOT_USERNAME}?start=${currentUser.referralCode}`;
-  }
-
-
-  /* TAP BUTTON */
-
-  document
-    .getElementById("tapBtn")
-    .addEventListener("click", async () => {
-
-      tg?.HapticFeedback?.impactOccurred("light");
-
-      const res = await fetch(`${API_BASE}/api/tap`, {
-
+  document.querySelectorAll("[data-task-btn]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const task = btn.getAttribute("data-task-btn");
+      if (currentUser?.tasks?.[task]) return; // already done
+      const res = await fetch(`${API_BASE}/api/task/complete`, {
         method: "POST",
-
-        headers: {
-          "Content-Type": "application/json"
-        },
-
-        body: JSON.stringify({
-          userId
-        })
-
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, task }),
       });
-
-      currentUser = await res.json();
-
+      const data = await res.json();
+      currentUser = data.user || data;
       render();
-
     });
+  });
 
-
-  /* SHARE BUTTON */
-
-  document
-    .getElementById("shareBtn")
-    .addEventListener("click", () => {
-
-      const link =
-        `https://t.me/${BOT_USERNAME}?start=${currentUser.referralCode}`;
-
-      const shareUrl =
-        `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Join me and earn points!")}`;
-
-      tg?.openTelegramLink
-        ? tg.openTelegramLink(shareUrl)
-        : window.open(shareUrl, "_blank");
-
+  // Bottom nav switching
+  document.querySelectorAll("nav.bottom-nav button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("nav.bottom-nav button").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
+      btn.classList.add("active");
+      document.getElementById(`screen-${btn.dataset.screen}`).classList.add("active");
     });
+  });
 
+  // Refresh periodically so the charges bar keeps regenerating visibly
+  setInterval(loadUser, 5000);
 
   loadUser();
-
-
-  /* CHAT ASSISTANT */
-
-  const chatLog =
-    document.getElementById("chatLog");
-
-  const chatInput =
-    document.getElementById("chatInput");
-
-  const chatSend =
-    document.getElementById("chatSend");
-
-
-  function addMessage(role, text) {
-
-    const div =
-      document.createElement("div");
-
-    div.className =
-      `msg ${role}`;
-
-    div.textContent =
-      text;
-
-    chatLog.appendChild(div);
-
-    chatLog.scrollTop =
-      chatLog.scrollHeight;
-  }
-
-
-  async function sendChat() {
-
-    const text =
-      chatInput.value.trim();
-
-    if (!text) return;
-
-    addMessage("user", text);
-
-    chatInput.value = "";
-
-    chatSend.disabled = true;
-
-
-    try {
-
-      const res =
-        await fetch(`${API_BASE}/api/chat`, {
-
-          method: "POST",
-
-          headers: {
-            "Content-Type": "application/json"
-          },
-
-          body: JSON.stringify({
-            userId,
-            message: text
-          })
-
-        });
-
-
-      const data =
-        await res.json();
-
-
-      addMessage(
-        "assistant",
-        data.reply ||
-        data.error ||
-        "Something went wrong."
-      );
-
-
-    } catch (err) {
-
-      addMessage(
-        "assistant",
-        "Couldn't reach the assistant. Try again."
-      );
-
-    } finally {
-
-      chatSend.disabled = false;
-
-    }
-  }
-
-
-  chatSend.addEventListener(
-    "click",
-    sendChat
-  );
-
-
-  chatInput.addEventListener(
-    "keydown",
-    (e) => {
-
-      if (e.key === "Enter") {
-        sendChat();
-      }
-
-    }
-  );
-
 </script>
-
 </body>
 </html>
