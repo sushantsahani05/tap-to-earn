@@ -14,6 +14,8 @@ const REFERRAL_BONUS = 500000000;
 const TASK_REWARD = 100000000;
 const MAX_CHARGES = 1000;
 const CHARGE_REGEN_PER_SEC = 1; // +1 charge every second
+const AD_REWARD_CHARGES = 500; // charges granted per completed ad view
+const AD_REWARD_POINTS = 1000000; // points granted per completed ad view (points ad)
 
 const TASK_KEYS = ["telegram", "youtube", "instagram"];
 const TELEGRAM_CHANNEL = "@bakicoins"; // used to verify channel membership
@@ -169,6 +171,33 @@ app.post("/api/task/complete", async (req, res) => {
   await db.write();
 
   res.json(user);
+});
+
+// Called by Adsgram's servers (not the browser) after a user finishes
+// watching a rewarded ad. Set this exact URL, with [userId] left as-is,
+// as the "Reward URL" in each Adsgram ad block's settings:
+//   Charges ad block: https://YOUR-DOMAIN/api/ad/reward?userId=[userId]&type=charges
+//   Points ad block:  https://YOUR-DOMAIN/api/ad/reward?userId=[userId]&type=points
+app.get("/api/ad/reward", async (req, res) => {
+  const { userId, type } = req.query;
+  if (!userId) return res.status(400).send("userId required");
+
+  const db = await getDb();
+  const user = db.data.users[userId];
+  if (!user) return res.status(404).send("user not found");
+
+  backfillUser(user);
+  regenCharges(user);
+
+  if (type === "points") {
+    user.points += AD_REWARD_POINTS;
+  } else {
+    // Default to charges for backward compatibility
+    user.charges = Math.min(user.maxCharges, user.charges + AD_REWARD_CHARGES);
+  }
+
+  await db.write();
+  res.status(200).send("OK");
 });
 
 // Simple leaderboard

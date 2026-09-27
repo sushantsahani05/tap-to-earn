@@ -6,6 +6,7 @@
 <title>Tap to Earn</title>
 <link rel="icon" href="/tap-icon.png" />
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://sad.adsgram.ai/js/sad.min.js"></script>
 <style>
   :root {
     --bg: #0f1115;
@@ -167,6 +168,13 @@
     <div class="charges-bar-track"><div class="charges-bar-fill" id="chargesBar" style="width:100%"></div></div>
 
     <button class="tap-button" id="tapBtn">TAP<br />+10,000</button>
+
+    <button class="btn secondary" id="watchAdChargesBtn" style="max-width:360px; margin-top:20px;">
+      📺 Watch Ad for +500 Charges
+    </button>
+    <button class="btn secondary" id="watchAdPointsBtn" style="max-width:360px; margin-top:10px;">
+      📺 Watch Ad for +1,000,000 Points
+    </button>
   </section>
 
   <!-- REFER -->
@@ -351,6 +359,39 @@
   setInterval(loadUser, 5000);
 
   loadUser();
+
+  // --- Adsgram rewarded ads ---
+  // Each button uses its own Adsgram ad block (own Block ID + own Reward
+  // URL with a different `type` so the backend knows what to grant).
+  // Replace both with your real Block IDs from the Adsgram dashboard.
+  const ADSGRAM_CHARGES_BLOCK_ID = "your-charges-block-id";
+  const ADSGRAM_POINTS_BLOCK_ID = "your-points-block-id";
+
+  const ChargesAdController = window.Adsgram?.init({ blockId: ADSGRAM_CHARGES_BLOCK_ID });
+  const PointsAdController = window.Adsgram?.init({ blockId: ADSGRAM_POINTS_BLOCK_ID });
+
+  function wireAdButton(buttonId, controller) {
+    document.getElementById(buttonId).addEventListener("click", () => {
+      if (!controller) {
+        alert("Ads aren't set up yet.");
+        return;
+      }
+      controller
+        .show()
+        .then(() => {
+          // Ad watched successfully. Adsgram's own servers call your
+          // /api/ad/reward endpoint directly, so we just refresh shortly
+          // after to reflect the reward once that lands.
+          setTimeout(loadUser, 1500);
+        })
+        .catch(() => {
+          // User closed/skipped the ad, or it failed to load — no reward.
+        });
+    });
+  }
+
+  wireAdButton("watchAdChargesBtn", ChargesAdController);
+  wireAdButton("watchAdPointsBtn", PointsAdController);
 </script>
 </body>
 </html>
