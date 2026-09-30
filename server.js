@@ -2,7 +2,21 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { nanoid } from "nanoid";
-import { getUser, saveUser, getAllUsers, findUserByReferralCode } from "./db.js";
+import {
+  getUser,
+  saveUser,
+  getAllUsers,
+  findUserByReferralCode,
+  getGame,
+  createGame,
+  saveGame,
+  deleteGame,
+  acquireGameLock,
+  releaseGameLock,
+} from "./db.js";
+import { GAMES } from "./games/index.js";
+import { GameError } from "./games/common.js";
+import { verifyTelegramInitData } from "./auth.js";
 
 const app = express();
 app.use(cors());
@@ -16,6 +30,7 @@ const MAX_CHARGES = 1000;
 const CHARGE_REFILL_MS = 60 * 60 * 1000; // full refill 1 hour after charges hit 0
 const AD_REWARD_CHARGES = 500; // charges granted per completed ad view
 const AD_REWARD_POINTS = 1000000; // points granted per completed ad view (points ad)
+const GAME_STAKE = 10000000; // win = +10M points, loss = -10M points
 
 const TASK_KEYS = ["telegram", "youtube", "instagram"];
 const TELEGRAM_CHANNEL = "@bakicoins"; // used to verify channel membership
@@ -76,8 +91,10 @@ app.post("/api/user", async (req, res) => {
   if (!userId) return res.status(400).json({ error: "userId required" });
 
   let user = await getUser(userId);
+  let changed = false;
 
   if (!user) {
+    changed = true;
     user = {
       id: userId,
       points: 0,
@@ -103,11 +120,16 @@ app.post("/api/user", async (req, res) => {
       }
     }
   } else {
+    // Only write back if something really changed. The app polls this endpoint
+    // every few seconds; writing every time could overwrite a game payout
+    // that landed a moment earlier.
+    const before = JSON.stringify(user);
     backfillUser(user);
     refillCharges(user);
+    changed = JSON.stringify(user) !== before;
   }
 
-  await saveUser(user);
+  if (changed) await saveUser(user);
   res.json(user);
 });
 
@@ -198,6 +220,152 @@ app.get("/api/ad/reward", async (req, res) => {
 
   await saveUser(user);
   res.status(200).send("OK");
+});
+
+// ---------- Games vs the computer ----------
+// All game logic runs here on the server: dice are rolled here and chess moves
+// are checked here, so the browser can't fake a win. Each game is staked:
+// win = +10M points, loss = -10M points, draw = no change. A player needs at
+// least the stake to start, and can't dodge a loss by closing the app (the
+// game just resumes), only by resigning, which counts as a loss.
+
+// Games move points around, so the server must know WHO is really playing.
+// The browser sends Telegram's signed login data; we check the signature and
+// use the user id inside it, ignoring any userId the browser claims.
+app.use("/api/game", (req, res, next) => {
+  const verifiedId = verifyTelegramInitData(req.body?.initData, process.env.BOT_TOKEN);
+  if (!verifiedId) {
+    return res.status(401).json({ error: "Please open the app from Telegram to play games." });
+  }
+  req.body.userId = verifiedId;
+  delete req.body.initData;
+  next();
+});
+
+const viewOf = (state) => GAMES[state.game].clientView(state);
+
+// Pays out (or charges) a finished game exactly once.
+async function settleGame(userId, state) {
+  const removed = await deleteGame(userId);
+  if (removed !== 1) return null; // another request already settled this game
+
+  const user = await getUser(userId);
+  if (!user) return null;
+  backfillUser(user);
+
+  let outcome = "draw";
+  let delta = 0;
+  if (state.winner === "p") {
+    outcome = "win";
+    delta = GAME_STAKE;
+  } else if (state.winner === "b") {
+    outcome = "loss";
+    delta = -GAME_STAKE;
+  }
+  user.points = Math.max(0, user.points + delta);
+  await saveUser(user);
+  return { outcome, delta, user };
+}
+
+// Runs fn while holding the player's game lock, and turns errors into responses.
+async function withGameLock(userId, res, fn) {
+  if (!(await acquireGameLock(userId))) {
+    return res.status(429).json({ error: "Slow down, your last move is still being processed." });
+  }
+  try {
+    await fn();
+  } catch (err) {
+    if (err instanceof GameError) {
+      res.status(400).json({ error: err.message });
+    } else {
+      console.error("Game error:", err);
+      res.status(500).json({ error: "Something went wrong with the game." });
+    }
+  } finally {
+    await releaseGameLock(userId);
+  }
+}
+
+// The player's current game, if any (lets the app resume after a reload).
+app.post("/api/game/state", async (req, res) => {
+  const { userId } = req.body;
+  if (!userId) return res.status(400).json({ error: "userId required" });
+  const state = await getGame(userId);
+  res.json({ game: state ? viewOf(state) : null });
+});
+
+app.post("/api/game/start", async (req, res) => {
+  const { userId, game } = req.body;
+  if (!userId || typeof game !== "string" || !Object.hasOwn(GAMES, game)) {
+    return res.status(400).json({ error: "valid userId and game required" });
+  }
+
+  await withGameLock(userId, res, async () => {
+    const user = await getUser(userId);
+    if (!user) return res.status(404).json({ error: "user not found" });
+
+    if (await getGame(userId)) {
+      return res.status(400).json({ error: "Finish or resign your current game first." });
+    }
+    if (user.points < GAME_STAKE) {
+      return res
+        .status(400)
+        .json({ error: `You need at least ${GAME_STAKE.toLocaleString("en-US")} points to play.` });
+    }
+
+    const { state, log } = GAMES[game].newGame();
+    if (!(await createGame(userId, state))) {
+      return res.status(400).json({ error: "Finish or resign your current game first." });
+    }
+    res.json({ game: viewOf(state), log, user });
+  });
+});
+
+app.post("/api/game/action", async (req, res) => {
+  const { userId, action, ...params } = req.body;
+  if (!userId || typeof action !== "string") {
+    return res.status(400).json({ error: "userId and action required" });
+  }
+
+  await withGameLock(userId, res, async () => {
+    const state = await getGame(userId);
+    if (!state) return res.status(404).json({ error: "No active game." });
+
+    const { log } = GAMES[state.game].handleAction(state, action, params);
+
+    if (state.over) {
+      const settled = await settleGame(userId, state);
+      return res.json({
+        game: viewOf(state),
+        log,
+        result: settled ? { outcome: settled.outcome, delta: settled.delta } : undefined,
+        user: settled?.user,
+      });
+    }
+
+    await saveGame(userId, state);
+    res.json({ game: viewOf(state), log });
+  });
+});
+
+app.post("/api/game/resign", async (req, res) => {
+  const { userId } = req.body;
+  if (!userId) return res.status(400).json({ error: "userId required" });
+
+  await withGameLock(userId, res, async () => {
+    const state = await getGame(userId);
+    if (!state) return res.status(404).json({ error: "No active game." });
+
+    state.over = true;
+    state.winner = "b";
+    const settled = await settleGame(userId, state);
+    res.json({
+      game: viewOf(state),
+      log: [],
+      result: settled ? { outcome: settled.outcome, delta: settled.delta } : undefined,
+      user: settled?.user,
+    });
+  });
 });
 
 // Simple leaderboard

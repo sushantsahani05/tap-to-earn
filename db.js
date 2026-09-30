@@ -27,6 +27,39 @@ export async function getAllUsers() {
   return users.filter(Boolean);
 }
 
+// --- Game sessions (one active game per player) ---
+const gameKey = (userId) => `game:${userId}`;
+
+export async function getGame(userId) {
+  return await redis.get(gameKey(userId));
+}
+
+// Only creates the game if none exists yet. Returns true if it was created.
+export async function createGame(userId, state) {
+  const res = await redis.set(gameKey(userId), state, { nx: true });
+  return res === "OK";
+}
+
+export async function saveGame(userId, state) {
+  await redis.set(gameKey(userId), state);
+}
+
+// Returns how many keys were removed (1 = this call removed it). Used so a
+// finished game pays out exactly once, even if two requests race.
+export async function deleteGame(userId) {
+  return await redis.del(gameKey(userId));
+}
+
+// Short-lived lock so one player can't run two game actions at the same time.
+export async function acquireGameLock(userId) {
+  const res = await redis.set(`lock:game:${userId}`, 1, { nx: true, ex: 15 });
+  return res === "OK";
+}
+
+export async function releaseGameLock(userId) {
+  await redis.del(`lock:game:${userId}`);
+}
+
 export async function findUserByReferralCode(code, excludeId) {
   const users = await getAllUsers();
   return users.find((u) => u.referralCode === code && u.id !== excludeId);

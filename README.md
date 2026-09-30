@@ -9,7 +9,15 @@ Tasks (social follows for points), and Airdrop (placeholder for later).
 - `server.js` — the backend API (user state, tap, tasks, leaderboard)
 - `public/index.html` — the mini app UI with bottom-tab navigation
 - `db.js` — persistent storage using Upstash Redis (see setup below —
-  **required**, the app won't start without it)
+  **required**, the app won't start without it), plus game-session
+  storage (one active game per player, with a short lock so a player
+  can't submit two moves at once)
+- `auth.js` — verifies Telegram's signed `initData` server-side, so game
+  requests can be trusted
+- `games/` — one file per game (`chessGame.js`, `ludo.js`, `snake.js`)
+  plus `common.js` (shared errors/dice) and `index.js` (registers them)
+- `public/games.js`, `public/games.css` — the Games tab's UI (board
+  drawing, clicks → API calls) and its styling
 
 ## How the app works
 - **Home** — balance and a TAP button showing your `tap-icon.png` image,
@@ -33,6 +41,37 @@ Tasks (social follows for points), and Airdrop (placeholder for later).
   - **YouTube and Instagram are honor-system** — there's no free API to
     verify a subscribe/follow, so clicking Verify pays out immediately.
     See the note below if you want to tighten this later.
+- **Games** — Chess, Ludo, and Snake & Ladder, one player vs the computer.
+  Every game is staked: win +10,000,000 points, lose −10,000,000, a draw
+  changes nothing. A player needs at least the stake to start.
+  - **Everything runs on the server** — dice rolls, chess legality, the
+    bot's moves, and the payout. The browser only draws the board and
+    sends what the player clicked; it can't fake a win, fake a dice roll,
+    or claim a payout that didn't happen.
+  - **Bots are hard on purpose:**
+    - *Chess* — a real alpha-beta search (chess.js for rules, a
+      hand-written evaluator + search on top) roughly 4 moves deep.
+      Strong club-player level; expect to lose most games unless you
+      actually know chess.
+    - *Ludo* — the bot scores every legal move each turn (captures,
+      reaching home, dodging danger, racing to escape capture range) and
+      always plays the best-scoring one. In simulation, a sensible human
+      strategy wins only around 1 game in 6.
+    - *Snake & Ladder* — pure luck by nature, so both sides use the same
+      fair dice. Simulated at a true 50/50 win rate — nothing is
+      rigged here, the stake is what makes it feel like something's on
+      the line.
+  - **You can't dodge a loss by closing the app** — an unfinished game
+    just resumes where it left off next time. The only way out of a game
+    early is Resign, which counts as a loss.
+  - **Identity is verified, not trusted.** Every `/api/game/*` request
+    must include Telegram's signed `initData` (sent automatically by the
+    app); the server checks that signature against `BOT_TOKEN` and uses
+    the Telegram user id embedded in it — never whatever `userId` the
+    browser sends. This is what stops one player from starting or
+    resigning a game as if they were someone else. If `BOT_TOKEN` is
+    wrong or the app isn't opened through Telegram, games are refused
+    with "Please open the app from Telegram to play games."
 - **Airdrop** — placeholder screen for a future token/reward drop.
 - **Watch Ad buttons (Monetag)** — two reward buttons using Monetag:
   Rewarded Interstitial for +500 charges, Rewarded
