@@ -1,3 +1,5 @@
+import { verifyTelegramInitData } from "./auth.js";
+import TelegramBot from "node-telegram-bot-api";
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
