@@ -407,6 +407,15 @@
     navigator.clipboard.writeText(refLinkEl.textContent);
   });
 
+  // The link text itself wasn't clickable before — it was just a <div>
+  // showing text. This makes tapping it actually open the bot, same as
+  // what a friend clicking the link from outside the app would get.
+  refLinkEl.style.cursor = "pointer";
+  refLinkEl.addEventListener("click", () => {
+    const link = refLinkEl.textContent;
+    tg?.openTelegramLink ? tg.openTelegramLink(link) : window.open(link, "_blank");
+  });
+
   document.getElementById("shareBtn").addEventListener("click", () => {
     const link = refLinkEl.textContent;
     const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Join me and earn points!")}`;
