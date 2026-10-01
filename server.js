@@ -1,5 +1,3 @@
-import { verifyTelegramInitData } from "./auth.js";
-import TelegramBot from "node-telegram-bot-api";
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -19,6 +17,7 @@ import {
 import { GAMES } from "./games/index.js";
 import { GameError } from "./games/common.js";
 import { verifyTelegramInitData } from "./auth.js";
+import TelegramBot from "node-telegram-bot-api";
 
 const app = express();
 app.use(cors());
