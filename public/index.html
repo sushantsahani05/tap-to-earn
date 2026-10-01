@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Tap to Earn</title>
 <link rel="icon" href="/tap-icon.png" />
+<link rel="stylesheet" href="/games.css" />
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="//libtl.com/sdk.js" data-zone="11909132" data-sdk="show_11909132"></script>
 <style>
@@ -244,6 +245,40 @@
     </div>
   </section>
 
+  <!-- GAMES -->
+  <section class="screen" id="screen-games">
+    <div class="game-wrap" id="gameLobby">
+      <div class="card" style="margin-top:0;">
+        <p class="label">Play against the computer. Each game costs a 10,000,000 point stake: win +10,000,000, lose −10,000,000. Draws change nothing.</p>
+      </div>
+      <div class="game-card">
+        <div><div class="name">♟️ Chess</div><div class="sub">You play White against a strong computer</div></div>
+        <button data-game="chess">Play</button>
+      </div>
+      <div class="game-card">
+        <div><div class="name">🎲 Ludo</div><div class="sub">You vs a clever computer, 4 tokens each</div></div>
+        <button data-game="ludo">Play</button>
+      </div>
+      <div class="game-card">
+        <div><div class="name">🐍 Snake &amp; Ladder</div><div class="sub">Pure luck, fair dice for both sides</div></div>
+        <button data-game="snake">Play</button>
+      </div>
+      <div class="lobby-note" id="lobbyNote"></div>
+    </div>
+
+    <div class="game-wrap" id="gameArea" style="display:none;">
+      <div class="game-head">
+        <h2 id="gameTitle"></h2>
+        <button class="resign-btn" id="resignBtn">Resign</button>
+      </div>
+      <div class="game-status" id="gameStatus"></div>
+      <div id="gameBoard"></div>
+      <div id="gameControls"></div>
+      <div id="gameResult"></div>
+      <div class="game-log" id="gameLog"></div>
+    </div>
+  </section>
+
   <!-- AIRDROP -->
   <section class="screen" id="screen-airdrop">
     <div class="airdrop-box">
@@ -256,6 +291,7 @@
     <button data-screen="home" class="active"><span class="icon">🏠</span>Home</button>
     <button data-screen="refer"><span class="icon">👥</span>Refer</button>
     <button data-screen="tasks"><span class="icon">✅</span>Tasks</button>
+    <button data-screen="games"><span class="icon">🎮</span>Games</button>
     <button data-screen="airdrop"><span class="icon">🎁</span>Airdrop</button>
   </nav>
 
@@ -473,5 +509,6 @@
     });
   }
 </script>
+<script src="/games.js"></script>
 </body>
 </html>
