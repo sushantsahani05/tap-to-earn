@@ -9,12 +9,21 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 //   secret = HMAC_SHA256(key "WebAppData", message = bot token)
 //   hash   = hex(HMAC_SHA256(key = secret, message = every field except
 //            "hash", sorted by name, written as name=value, one per line))
-export function verifyTelegramInitData(initData, botToken, maxAgeSeconds = 24 * 60 * 60) {
-  if (typeof initData !== "string" || !initData || !botToken) return null;
+function fail(reason) {
+  // Logged server-side only (e.g. visible in Render's Logs tab) — never
+  // sent back to the browser, so it can't help an attacker guess the fix.
+  console.error("[auth] rejected initData:", reason);
+  return null;
+}
+
+export function verifyTelegramInitData(initData, botTokenRaw, maxAgeSeconds = 24 * 60 * 60) {
+  const botToken = typeof botTokenRaw === "string" ? botTokenRaw.trim() : botTokenRaw;
+  if (typeof initData !== "string" || !initData) return fail("no initData sent by the browser");
+  if (!botToken) return fail("BOT_TOKEN is not set on the server");
 
   const params = new URLSearchParams(initData);
   const hash = params.get("hash");
-  if (!hash || !/^[0-9a-f]{64}$/i.test(hash)) return null;
+  if (!hash || !/^[0-9a-f]{64}$/i.test(hash)) return fail("missing/malformed hash field");
   params.delete("hash");
 
   const dataCheckString = [...params.entries()]
@@ -25,15 +34,19 @@ export function verifyTelegramInitData(initData, botToken, maxAgeSeconds = 24 * 
   const secret = createHmac("sha256", "WebAppData").update(botToken).digest();
   const expected = createHmac("sha256", secret).update(dataCheckString).digest();
   const given = Buffer.from(hash, "hex");
-  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+    return fail("signature mismatch — BOT_TOKEN on the server likely doesn't match the bot that issued this initData");
+  }
 
   const authDate = Number(params.get("auth_date"));
-  if (!authDate || Date.now() / 1000 - authDate > maxAgeSeconds) return null;
+  if (!authDate) return fail("missing auth_date");
+  if (Date.now() / 1000 - authDate > maxAgeSeconds) return fail("initData is older than " + maxAgeSeconds + "s");
 
   try {
     const user = JSON.parse(params.get("user"));
-    return user && user.id ? String(user.id) : null;
+    if (!user || !user.id) return fail("no user.id in initData");
+    return String(user.id);
   } catch {
-    return null;
+    return fail("couldn't parse the user field");
   }
 }
