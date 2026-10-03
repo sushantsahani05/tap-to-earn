@@ -17,7 +17,6 @@ import {
 import { GAMES } from "./games/index.js";
 import { GameError } from "./games/common.js";
 import { verifyTelegramInitData } from "./auth.js";
-import TelegramBot from "node-telegram-bot-api";
 
 const app = express();
 app.use(cors());
@@ -31,7 +30,14 @@ const MAX_CHARGES = 1000;
 const CHARGE_REFILL_MS = 60 * 60 * 1000; // full refill 1 hour after charges hit 0
 const AD_REWARD_CHARGES = 500; // charges granted per completed ad view
 const AD_REWARD_POINTS = 1000000; // points granted per completed ad view (points ad)
-const GAME_STAKE = 10000000; // win = +10M points, loss = -10M points
+// Each game has its own win amount, loss amount, and minimum points needed
+// to start (set to that game's loss amount, since that's the most you can
+// be charged). Chess pays more because it's the hardest to win.
+const GAME_STAKES = {
+  chess: { win: 50_000_000, loss: 10_000_000 },
+  ludo: { win: 25_000_000, loss: 7_500_000 },
+  snake: { win: 10_000_000, loss: 5_000_000 },
+};
 
 const TASK_KEYS = ["telegram", "youtube", "instagram"];
 const TELEGRAM_CHANNEL = "@bakicoins"; // used to verify channel membership
@@ -225,10 +231,11 @@ app.get("/api/ad/reward", async (req, res) => {
 
 // ---------- Games vs the computer ----------
 // All game logic runs here on the server: dice are rolled here and chess moves
-// are checked here, so the browser can't fake a win. Each game is staked:
-// win = +10M points, loss = -10M points, draw = no change. A player needs at
-// least the stake to start, and can't dodge a loss by closing the app (the
-// game just resumes), only by resigning, which counts as a loss.
+// are checked here, so the browser can't fake a win. Each game is staked
+// (see GAME_STAKES above — win/loss amounts differ per game), draw = no
+// change. A player needs at least that game's loss amount to start, and
+// can't dodge a loss by closing the app (the game just resumes), only by
+// resigning, which counts as a loss.
 
 // Games move points around, so the server must know WHO is really playing.
 // The browser sends Telegram's signed login data; we check the signature and
@@ -254,14 +261,15 @@ async function settleGame(userId, state) {
   if (!user) return null;
   backfillUser(user);
 
+  const stakes = GAME_STAKES[state.game];
   let outcome = "draw";
   let delta = 0;
   if (state.winner === "p") {
     outcome = "win";
-    delta = GAME_STAKE;
+    delta = stakes.win;
   } else if (state.winner === "b") {
     outcome = "loss";
-    delta = -GAME_STAKE;
+    delta = -stakes.loss;
   }
   user.points = Math.max(0, user.points + delta);
   await saveUser(user);
@@ -308,10 +316,11 @@ app.post("/api/game/start", async (req, res) => {
     if (await getGame(userId)) {
       return res.status(400).json({ error: "Finish or resign your current game first." });
     }
-    if (user.points < GAME_STAKE) {
+    const required = GAME_STAKES[game].loss;
+    if (user.points < required) {
       return res
         .status(400)
-        .json({ error: `You need at least ${GAME_STAKE.toLocaleString("en-US")} points to play.` });
+        .json({ error: `You need at least ${required.toLocaleString("en-US")} points to play ${game}.` });
     }
 
     const { state, log } = GAMES[game].newGame();

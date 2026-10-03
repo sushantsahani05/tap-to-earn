@@ -1,187 +1,403 @@
-/* ---------- Games tab ---------- */
-.game-wrap { width: 100%; max-width: 380px; }
+// Games tab: Chess, Ludo and Snake & Ladder against the computer.
+// All game rules run on the SERVER (dice, move checking, the bot, payouts).
+// This file only draws the board and sends the player's actions.
+// It relies on globals from the main script in index.html:
+// API_BASE, userId, currentUser and render().
+(function () {
+  // Must match GAME_STAKES in server.js — this copy is only for display
+  // text before a game starts; the server is what actually enforces it.
+  const STAKES = {
+    chess: { win: 50000000, loss: 10000000 },
+    ludo: { win: 25000000, loss: 7500000 },
+    snake: { win: 10000000, loss: 5000000 },
+  };
+  const $ = (id) => document.getElementById(id);
 
-/* Lobby */
-.game-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  background: var(--card);
-  border-radius: 14px;
-  padding: 14px 16px;
-  margin-top: 12px;
-}
-.game-card .name { font-weight: 700; font-size: 15px; }
-.game-card .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.game-card button {
-  padding: 8px 18px;
-  border: none;
-  border-radius: 8px;
-  font-weight: 700;
-  background: var(--accent);
-  color: #04231f;
-  cursor: pointer;
-}
-.game-card button:disabled { opacity: 0.4; cursor: not-allowed; }
-.lobby-note { color: #f6ad55; font-size: 13px; margin-top: 12px; text-align: center; }
+  const lobbyEl = $("gameLobby");
+  const areaEl = $("gameArea");
+  const titleEl = $("gameTitle");
+  const statusEl = $("gameStatus");
+  const boardEl = $("gameBoard");
+  const controlsEl = $("gameControls");
+  const logEl = $("gameLog");
+  const resultEl = $("gameResult");
+  const resignBtn = $("resignBtn");
+  const lobbyNote = $("lobbyNote");
 
-/* Game header / status / log */
-.game-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-.game-head h2 { font-size: 16px; margin: 0; }
-.resign-btn {
-  padding: 6px 12px;
-  border-radius: 8px;
-  border: 1px solid #3a3f4b;
-  background: none;
-  color: var(--muted);
-  font-size: 12px;
-  cursor: pointer;
-}
-.game-status { text-align: center; font-size: 14px; margin: 8px 0 10px; min-height: 20px; }
-.game-log { font-size: 12px; color: var(--muted); margin-top: 12px; min-height: 16px; line-height: 1.5; }
-#gameControls { margin-top: 12px; }
-#gameControls .hint { text-align: center; font-size: 13px; color: var(--muted); }
-#gameControls .legend { text-align: center; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  const TITLES = { chess: "♟️ Chess", ludo: "🎲 Ludo", snake: "🐍 Snake & Ladder" };
+  const fmt = (n) => Number(n).toLocaleString("en-US");
+  const escapeHtml = (s) =>
+    String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-.game-result {
-  margin-top: 14px;
-  padding: 14px;
-  border-radius: 12px;
-  text-align: center;
-  font-weight: 700;
-  background: var(--card);
-}
-.game-result.win { border: 1px solid #48bb78; color: #68d391; }
-.game-result.loss { border: 1px solid #f56565; color: #fc8181; }
-.game-result.draw { border: 1px solid #a0aec0; color: #cbd5e0; }
-.game-result .btn { margin-top: 10px; }
+  let view = null; // the current game, as sent by the server
+  let selected = null; // selected chess square
+  let busy = false; // waiting for the server
+  let logLines = [];
+  let result = null; // { outcome, delta } once the game ends
 
-/* ---------- Chess ---------- */
-.chess-board {
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 8px;
-  overflow: hidden;
-  user-select: none;
-}
-.sq {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: clamp(22px, 8.5vw, 36px);
-  cursor: pointer;
-}
-.sq.light { background: #e6dcc3; }
-.sq.dark { background: #7b9a5f; }
-.sq.last { box-shadow: inset 0 0 0 100px rgba(246, 224, 94, 0.35); }
-.sq.selected { box-shadow: inset 0 0 0 100px rgba(79, 209, 197, 0.55); }
-.sq.check { box-shadow: inset 0 0 0 100px rgba(245, 101, 101, 0.6); }
-.sq.target::after {
-  content: "";
-  position: absolute;
-  width: 30%;
-  height: 30%;
-  border-radius: 50%;
-  background: rgba(20, 20, 20, 0.35);
-}
-.pc { line-height: 1; z-index: 1; }
-.pc.w { color: #ffffff; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 1px 1px #000; }
-.pc.b { color: #161616; text-shadow: 0 0 1px rgba(255, 255, 255, 0.5); }
+  // ---------- server calls ----------
+  async function api(path, body) {
+    try {
+      const res = await fetch(`${API_BASE}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, initData: window.Telegram?.WebApp?.initData || "", ...body }),
+      });
+      const data = await res.json();
+      return { ok: res.ok, data };
+    } catch (err) {
+      return { ok: false, data: { error: "Couldn't reach the server. Try again." } };
+    }
+  }
 
-/* ---------- Snake & Ladder ---------- */
-.snake-board {
-  display: grid;
-  grid-template-columns: repeat(10, 1fr);
-  width: 100%;
-  border-radius: 8px;
-  overflow: hidden;
-  border: 2px solid #2a2e37;
-}
-.scell {
-  position: relative;
-  aspect-ratio: 1;
-  background: #1f232c;
-  border: 1px solid #14171d;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
-.scell:nth-child(odd) { background: #232833; }
-.scell small { position: absolute; top: 1px; left: 2px; font-size: 8px; color: var(--muted); }
-.scell em { font-style: normal; font-size: 8px; font-weight: 700; margin-top: 6px; }
-.scell.ladder { background: rgba(72, 187, 120, 0.22); }
-.scell.snake { background: rgba(245, 101, 101, 0.25); }
-.scell.goal { background: rgba(236, 201, 75, 0.35); }
-.tks { position: absolute; bottom: 2px; display: flex; gap: 2px; }
-.tk { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid #fff; display: inline-block; }
-.tk.p { background: #4299e1; }
-.tk.b { background: #f56565; }
+  // Handles a server reply. Returns true if it succeeded.
+  function handle(r) {
+    if (!r.ok) {
+      alert(r.data.error || "Something went wrong.");
+      return false;
+    }
+    view = r.data.game;
+    if (r.data.user) {
+      currentUser = r.data.user; // updated balance
+      render();
+    }
+    if (r.data.log) addLog(r.data.log, view.game);
+    if (r.data.result) result = r.data.result;
+    selected = null;
+    draw();
+    return true;
+  }
 
-/* ---------- Ludo ---------- */
-.ludo-board {
-  display: grid;
-  grid-template-columns: repeat(15, 1fr);
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 8px;
-  overflow: hidden;
-  border: 2px solid #2a2e37;
-}
-.lcell {
-  position: relative;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  align-content: center;
-  border: 1px solid rgba(0, 0, 0, 0.25);
-  background: #1a1d24;
-}
-.lcell.path { background: #e9e9ee; }
-.lcell.safe::before { content: "★"; position: absolute; font-size: 11px; color: #a0a0b0; }
-.lcell.start-p { background: #63b3ed; }
-.lcell.start-b { background: #fc8181; }
-.lcell.hp { background: #90cdf4; }
-.lcell.hb { background: #feb2b2; }
-.lcell.hx { background: #2a2e37; }
-.lcell.center { background: #ecc94b; }
-.lcell.base-p { background: #2b6cb0; }
-.lcell.base-b { background: #c53030; }
-.lcell.base-x { background: #2d3340; }
-.lcell.slot::after {
-  content: "";
-  position: absolute;
-  inset: 12%;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.25);
-}
-.ltok {
-  position: relative;
-  z-index: 2;
-  width: 78%;
-  aspect-ratio: 1;
-  max-width: 24px;
-  border-radius: 50%;
-  border: 2px solid #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 800;
-  color: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
-}
-.ltok.p { background: #2b6cb0; }
-.ltok.b { background: #c53030; }
-.lcell:has(.ltok + .ltok) .ltok { width: 46%; font-size: 7px; border-width: 1.5px; }
-@keyframes tokenGlow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(246, 224, 94, 0.9); }
-  50% { box-shadow: 0 0 0 5px rgba(246, 224, 94, 0); }
-}
-.ltok.sel { cursor: pointer; animation: tokenGlow 0.9s infinite; border-color: #f6e05e; }
+  async function startGame(type) {
+    if (busy) return;
+    busy = true;
+    logLines = [];
+    result = null;
+    selected = null;
+    const r = await api("/api/game/start", { game: type });
+    busy = false;
+    if (handle(r)) showArea();
+  }
+
+  async function act(action, params = {}) {
+    if (busy || !view || view.over) return;
+    busy = true;
+    draw(); // shows "thinking..."
+    const r = await api("/api/game/action", { action, ...params });
+    busy = false;
+    if (!handle(r)) draw();
+  }
+
+  // ---------- lobby / navigation ----------
+  function showArea() {
+    lobbyEl.style.display = "none";
+    areaEl.style.display = "block";
+  }
+
+  function showLobby() {
+    view = null;
+    result = null;
+    logLines = [];
+    areaEl.style.display = "none";
+    lobbyEl.style.display = "block";
+    refreshLobby();
+  }
+
+  function refreshLobby() {
+    const pts = currentUser ? currentUser.points : 0;
+    let anyAffordable = false;
+    document.querySelectorAll("[data-game]").forEach((b) => {
+      const required = STAKES[b.dataset.game].loss;
+      const ok = pts >= required;
+      b.disabled = !ok;
+      if (ok) anyAffordable = true;
+    });
+    const cheapest = Math.min(...Object.values(STAKES).map((s) => s.loss));
+    lobbyNote.textContent = anyAffordable
+      ? ""
+      : `You need at least ${fmt(cheapest)} points to play. Your balance: ${fmt(pts)}.`;
+  }
+
+  document.querySelectorAll("[data-game]").forEach((b) => {
+    b.addEventListener("click", () => startGame(b.dataset.game));
+  });
+
+  resignBtn.addEventListener("click", async () => {
+    if (busy || !view || view.over) return;
+    if (!confirm(`Resign? You will lose ${fmt(STAKES[view.game].loss)} points.`)) return;
+    busy = true;
+    const r = await api("/api/game/resign", {});
+    busy = false;
+    handle(r);
+  });
+
+  resultEl.addEventListener("click", (e) => {
+    if (e.target.id === "backLobbyBtn") showLobby();
+  });
+
+  const gamesNavBtn = document.querySelector('nav.bottom-nav [data-screen="games"]');
+  if (gamesNavBtn) gamesNavBtn.addEventListener("click", refreshLobby);
+  setInterval(refreshLobby, 2000);
+
+  // ---------- log + status text ----------
+  const who = (w) => (w === "p" ? "You" : "Bot");
+
+  function describe(e, game) {
+    if (game === "chess") return `${who(e.who)}: ${e.san}`;
+    if (game === "snake") {
+      return `${who(e.who)} rolled ${e.dice} → ${e.to}${e.note ? ` (${e.note})` : ""}`;
+    }
+    // ludo
+    if (e.token === undefined) {
+      return `${who(e.who)} rolled ${e.dice}${e.note ? " (no move possible)" : ""}`;
+    }
+    let s =
+      e.dice !== undefined
+        ? `${who(e.who)} rolled ${e.dice}, moved token ${e.token + 1}`
+        : `${who(e.who)} moved token ${e.token + 1}`;
+    if (e.captured) s += ", captured a token!";
+    if (e.finished) s += ", reached home!";
+    return s;
+  }
+
+  function addLog(entries, game) {
+    logLines.push(...entries.map((e) => describe(e, game)));
+    logLines = logLines.slice(-8);
+  }
+
+  function statusText() {
+    if (view.over) return "Game over";
+    if (busy) return view.game === "chess" ? "Bot is thinking…" : "Rolling…";
+    if (view.game === "chess") return view.inCheck ? "Check! Your move" : "Your move (White)";
+    if (view.game === "snake") {
+      const p = view.pos.p || "start";
+      const b = view.pos.b || "start";
+      return `You: ${p} · Bot: ${b}. Roll the dice!`;
+    }
+    return view.phase === "roll" ? "Your turn: roll the dice" : `You rolled ${view.dice}. Tap a glowing token.`;
+  }
+
+  function resultHtml() {
+    let outcome = result ? result.outcome : view.winner === "p" ? "win" : view.winner === "b" ? "loss" : "draw";
+    let text;
+    const s = STAKES[view.game];
+    if (outcome === "win") text = `🎉 You won! +${fmt(result ? result.delta : s.win)} points`;
+    else if (outcome === "loss") text = `💀 You lost. −${fmt(result ? -result.delta : s.loss)} points`;
+    else text = "🤝 Draw. No points changed.";
+    return `<div class="game-result ${outcome}">${text}<button class="btn" id="backLobbyBtn">Back to lobby</button></div>`;
+  }
+
+  // ---------- drawing ----------
+  function draw() {
+    if (!view) return;
+    titleEl.textContent = TITLES[view.game];
+    statusEl.textContent = statusText();
+    resignBtn.style.display = view.over ? "none" : "";
+    resultEl.innerHTML = view.over ? resultHtml() : "";
+    if (view.game === "chess") drawChess();
+    else if (view.game === "snake") drawSnake();
+    else drawLudo();
+    logEl.innerHTML = logLines.map((l) => `<div>${escapeHtml(l)}</div>`).join("");
+  }
+
+  // One click handler for all boards.
+  boardEl.addEventListener("click", (e) => {
+    if (!view || view.over || busy) return;
+
+    if (view.game === "chess") {
+      const sq = e.target.closest("[data-sq]");
+      if (!sq) return;
+      const name = sq.dataset.sq;
+      if (selected && (view.legal[selected] || []).includes(name)) {
+        const from = selected;
+        selected = null;
+        act("move", { from, to: name });
+        return;
+      }
+      selected = view.legal[name] ? name : null;
+      draw();
+    } else if (view.game === "ludo") {
+      const tok = e.target.closest("[data-token]");
+      if (tok && tok.classList.contains("sel")) act("move", { token: Number(tok.dataset.token) });
+    }
+  });
+
+  controlsEl.addEventListener("click", (e) => {
+    if (e.target.id === "rollBtn") act("roll");
+  });
+
+  // ----- Chess -----
+  const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
+
+  function chessSquare(r, c, piece, targets) {
+    const name = "abcdefgh"[c] + (8 - r);
+    let cls = "sq " + ((r + c) % 2 ? "dark" : "light");
+    if (name === selected) cls += " selected";
+    if (targets.includes(name)) cls += " target";
+    if (view.lastMove && (view.lastMove.from === name || view.lastMove.to === name)) cls += " last";
+    if (piece === "K" && view.inCheck) cls += " check";
+    const glyph = piece
+      ? `<span class="pc ${piece === piece.toUpperCase() ? "w" : "b"}">${GLYPH[piece.toLowerCase()]}\uFE0E</span>`
+      : "";
+    return `<div class="${cls}" data-sq="${name}">${glyph}</div>`;
+  }
+
+  function drawChess() {
+    const rows = view.fen.split(" ")[0].split("/");
+    const targets = selected ? view.legal[selected] || [] : [];
+    let html = '<div class="chess-board">';
+    for (let r = 0; r < 8; r++) {
+      let c = 0;
+      for (const ch of rows[r]) {
+        const n = parseInt(ch, 10);
+        if (Number.isNaN(n)) {
+          html += chessSquare(r, c, ch, targets);
+          c++;
+        } else {
+          for (let k = 0; k < n; k++) {
+            html += chessSquare(r, c, null, targets);
+            c++;
+          }
+        }
+      }
+    }
+    boardEl.innerHTML = html + "</div>";
+    controlsEl.innerHTML = "";
+  }
+
+  // ----- Snake & Ladder -----
+  function drawSnake() {
+    const { pos, ladders, snakes } = view;
+    let html = '<div class="snake-board">';
+    for (let row = 0; row < 10; row++) {
+      for (let col = 0; col < 10; col++) {
+        const rb = 9 - row; // row counted from the bottom
+        const num = rb % 2 === 0 ? rb * 10 + col + 1 : rb * 10 + (9 - col) + 1;
+        let cls = "scell";
+        let extra = "";
+        if (ladders[num]) {
+          cls += " ladder";
+          extra = `<em>🪜${ladders[num]}</em>`;
+        } else if (snakes[num]) {
+          cls += " snake";
+          extra = `<em>🐍${snakes[num]}</em>`;
+        }
+        if (num === 100) cls += " goal";
+        const toks = (pos.p === num ? '<i class="tk p"></i>' : "") + (pos.b === num ? '<i class="tk b"></i>' : "");
+        html += `<div class="${cls}"><small>${num}</small>${extra}<div class="tks">${toks}</div></div>`;
+      }
+    }
+    boardEl.innerHTML = html + "</div>";
+    controlsEl.innerHTML = view.over
+      ? ""
+      : `<button class="btn" id="rollBtn" ${busy ? "disabled" : ""}>🎲 Roll dice</button>
+         <div class="legend">🔵 You &nbsp; 🔴 Bot &nbsp; · 🪜 goes up &nbsp; 🐍 goes down</div>`;
+  }
+
+  // ----- Ludo -----
+  // The 52 squares of the shared ring on a 15x15 grid, clockwise from (6,1).
+  const RING = [];
+  const put = (r, c) => RING.push([r, c]);
+  for (let c = 1; c <= 5; c++) put(6, c);
+  for (let r = 5; r >= 0; r--) put(r, 6);
+  put(0, 7);
+  put(0, 8);
+  for (let r = 1; r <= 5; r++) put(r, 8);
+  for (let c = 9; c <= 14; c++) put(6, c);
+  put(7, 14);
+  put(8, 14);
+  for (let c = 13; c >= 9; c--) put(8, c);
+  for (let r = 9; r <= 14; r++) put(r, 8);
+  put(14, 7);
+  put(14, 6);
+  for (let r = 13; r >= 9; r--) put(r, 6);
+  for (let c = 5; c >= 0; c--) put(8, c);
+  put(7, 0);
+  put(6, 0);
+
+  const START = { p: 0, b: 26 }; // where each side enters the ring
+  const SAFE = new Set([0, 8, 13, 21, 26, 34, 39, 47]);
+  const HOME = {
+    p: [[7, 1], [7, 2], [7, 3], [7, 4], [7, 5]],
+    b: [[7, 13], [7, 12], [7, 11], [7, 10], [7, 9]],
+  };
+  const BASE = {
+    p: [[1, 1], [1, 4], [4, 1], [4, 4]],
+    b: [[10, 10], [10, 13], [13, 10], [13, 13]],
+  };
+
+  const RING_INDEX = {};
+  RING.forEach(([r, c], i) => (RING_INDEX[`${r},${c}`] = i));
+  const HOME_KEYS = { hp: new Set(HOME.p.map((x) => x.join(","))), hb: new Set(HOME.b.map((x) => x.join(","))) };
+  const SLOT_KEYS = new Set([...BASE.p, ...BASE.b].map((x) => x.join(",")));
+
+  function ludoCoords(side, r, i) {
+    if (r === -1) return BASE[side][i];
+    if (r <= 50) return RING[(START[side] + r) % 52];
+    if (r <= 55) return HOME[side][r - 51];
+    return [7, 7]; // finished: the centre
+  }
+
+  function ludoCellClass(r, c) {
+    const key = `${r},${c}`;
+    if (key in RING_INDEX) {
+      const idx = RING_INDEX[key];
+      let cls = "path";
+      if (SAFE.has(idx)) cls += " safe";
+      if (idx === START.p) cls += " start-p";
+      if (idx === START.b) cls += " start-b";
+      return cls;
+    }
+    if (HOME_KEYS.hp.has(key)) return "hp";
+    if (HOME_KEYS.hb.has(key)) return "hb";
+    if (r >= 6 && r <= 8 && c >= 6 && c <= 8) return "center";
+    if (r <= 5 && c <= 5) return "base-p" + (SLOT_KEYS.has(key) ? " slot" : "");
+    if (r >= 9 && c >= 9) return "base-b" + (SLOT_KEYS.has(key) ? " slot" : "");
+    if ((r <= 5 && c >= 9) || (r >= 9 && c <= 5)) return "base-x";
+    return "hx";
+  }
+
+  function drawLudo() {
+    const at = {};
+    for (const side of ["p", "b"]) {
+      view.tokens[side].forEach((r, i) => {
+        const [row, col] = ludoCoords(side, r, i);
+        (at[`${row},${col}`] ||= []).push({ side, i });
+      });
+    }
+
+    let html = '<div class="ludo-board">';
+    for (let r = 0; r < 15; r++) {
+      for (let c = 0; c < 15; c++) {
+        const toks = (at[`${r},${c}`] || [])
+          .map((t) => {
+            const sel = t.side === "p" && view.phase === "move" && !view.over && view.legal.includes(t.i);
+            const attr = t.side === "p" ? ` data-token="${t.i}"` : "";
+            return `<span class="ltok ${t.side}${sel ? " sel" : ""}"${attr}>${t.i + 1}</span>`;
+          })
+          .join("");
+        html += `<div class="lcell ${ludoCellClass(r, c)}">${toks}</div>`;
+      }
+    }
+    boardEl.innerHTML = html + "</div>";
+
+    if (view.over) controlsEl.innerHTML = "";
+    else if (view.phase === "roll") {
+      controlsEl.innerHTML = `<button class="btn" id="rollBtn" ${busy ? "disabled" : ""}>🎲 Roll dice</button>
+        <div class="legend">🔵 You &nbsp; 🔴 Bot &nbsp; · ★ safe squares · roll a 6 to leave base</div>`;
+    } else {
+      controlsEl.innerHTML = `<div class="hint">You rolled <b>${view.dice}</b>. Tap a glowing token to move it.</div>`;
+    }
+  }
+
+  // ---------- start: resume an unfinished game, if any ----------
+  (async function init() {
+    refreshLobby();
+    const r = await api("/api/game/state", {});
+    if (r.ok && r.data.game) {
+      view = r.data.game;
+      showArea();
+      draw();
+    }
+  })();
+})();

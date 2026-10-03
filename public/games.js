@@ -4,7 +4,13 @@
 // It relies on globals from the main script in index.html:
 // API_BASE, userId, currentUser and render().
 (function () {
-  const STAKE = 10000000;
+  // Must match GAME_STAKES in server.js — this copy is only for display
+  // text before a game starts; the server is what actually enforces it.
+  const STAKES = {
+    chess: { win: 50000000, loss: 10000000 },
+    ludo: { win: 25000000, loss: 7500000 },
+    snake: { win: 10000000, loss: 5000000 },
+  };
   const $ = (id) => document.getElementById(id);
 
   const lobbyEl = $("gameLobby");
@@ -99,11 +105,17 @@
 
   function refreshLobby() {
     const pts = currentUser ? currentUser.points : 0;
-    const ok = pts >= STAKE;
-    document.querySelectorAll("[data-game]").forEach((b) => (b.disabled = !ok));
-    lobbyNote.textContent = ok
+    let anyAffordable = false;
+    document.querySelectorAll("[data-game]").forEach((b) => {
+      const required = STAKES[b.dataset.game].loss;
+      const ok = pts >= required;
+      b.disabled = !ok;
+      if (ok) anyAffordable = true;
+    });
+    const cheapest = Math.min(...Object.values(STAKES).map((s) => s.loss));
+    lobbyNote.textContent = anyAffordable
       ? ""
-      : `You need at least ${fmt(STAKE)} points to play. Your balance: ${fmt(pts)}.`;
+      : `You need at least ${fmt(cheapest)} points to play. Your balance: ${fmt(pts)}.`;
   }
 
   document.querySelectorAll("[data-game]").forEach((b) => {
@@ -112,7 +124,7 @@
 
   resignBtn.addEventListener("click", async () => {
     if (busy || !view || view.over) return;
-    if (!confirm(`Resign? You will lose ${fmt(STAKE)} points.`)) return;
+    if (!confirm(`Resign? You will lose ${fmt(STAKES[view.game].loss)} points.`)) return;
     busy = true;
     const r = await api("/api/game/resign", {});
     busy = false;
@@ -168,8 +180,9 @@
   function resultHtml() {
     let outcome = result ? result.outcome : view.winner === "p" ? "win" : view.winner === "b" ? "loss" : "draw";
     let text;
-    if (outcome === "win") text = `🎉 You won! +${fmt(result ? result.delta : STAKE)} points`;
-    else if (outcome === "loss") text = `💀 You lost. −${fmt(result ? -result.delta : STAKE)} points`;
+    const s = STAKES[view.game];
+    if (outcome === "win") text = `🎉 You won! +${fmt(result ? result.delta : s.win)} points`;
+    else if (outcome === "loss") text = `💀 You lost. −${fmt(result ? -result.delta : s.loss)} points`;
     else text = "🤝 Draw. No points changed.";
     return `<div class="game-result ${outcome}">${text}<button class="btn" id="backLobbyBtn">Back to lobby</button></div>`;
   }
