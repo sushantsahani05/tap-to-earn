@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
@@ -144,28 +144,6 @@
   .lb-points { font-weight: 700; color: var(--accent); }
   .lb-empty { text-align: center; color: var(--muted); font-size: 13px; padding: 20px 0; }
 
-  .task-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 0;
-    border-bottom: 1px solid #23262f;
-  }
-  .task-row:last-child { border-bottom: none; }
-  .task-info .name { font-weight: 600; font-size: 14px; }
-  .task-info .reward { font-size: 12px; color: var(--muted); }
-  .task-btn {
-    padding: 8px 14px;
-    border-radius: 8px;
-    border: none;
-    font-weight: 700;
-    font-size: 13px;
-    cursor: pointer;
-    background: var(--accent);
-    color: #04231f;
-  }
-  .task-btn.done { background: #23262f; color: var(--muted); cursor: default; }
-
   .airdrop-box {
     text-align: center;
     padding: 60px 20px;
@@ -236,33 +214,6 @@
     </div>
   </section>
 
-  <!-- TASKS -->
-  <section class="screen" id="screen-tasks">
-    <div class="card" style="max-width:360px; width:100%;">
-      <div class="task-row" data-task="telegram" data-task-url="https://t.me/bakicoins">
-        <div class="task-info">
-          <div class="name">Join Telegram channel</div>
-          <div class="reward">+100,000,000 points</div>
-        </div>
-        <button class="task-btn" data-task-btn="telegram">Go</button>
-      </div>
-      <div class="task-row" data-task="youtube" data-task-url="https://www.youtube.com/channel/UCAxgc3IaAAqcvVbv5M68-4w">
-        <div class="task-info">
-          <div class="name">Subscribe on YouTube</div>
-          <div class="reward">+100,000,000 points</div>
-        </div>
-        <button class="task-btn" data-task-btn="youtube">Go</button>
-      </div>
-      <div class="task-row" data-task="instagram" data-task-url="">
-        <div class="task-info">
-          <div class="name">Follow on Instagram</div>
-          <div class="reward">+100,000,000 points</div>
-        </div>
-        <button class="task-btn" data-task-btn="instagram">Go</button>
-      </div>
-    </div>
-  </section>
-
   <!-- GAMES -->
   <section class="screen" id="screen-games">
     <div class="game-wrap" id="gameLobby">
@@ -316,7 +267,6 @@
   <nav class="bottom-nav">
     <button data-screen="home" class="active"><span class="icon">🏠</span>Home</button>
     <button data-screen="refer"><span class="icon">👥</span>Refer</button>
-    <button data-screen="tasks"><span class="icon">✅</span>Tasks</button>
     <button data-screen="games"><span class="icon">🎮</span>Games</button>
     <button data-screen="leaderboard"><span class="icon">🏆</span>Ranks</button>
     <button data-screen="airdrop"><span class="icon">🎁</span>Airdrop</button>
@@ -361,18 +311,6 @@
 
     referralsEl.textContent = currentUser.referralCount;
     refLinkEl.textContent = `https://t.me/${BOT_USERNAME}?start=${currentUser.referralCode}`;
-
-    for (const key of ["telegram", "youtube", "instagram"]) {
-      const btn = document.querySelector(`[data-task-btn="${key}"]`);
-      if (currentUser.tasks?.[key]) {
-        btn.textContent = "Done";
-        btn.classList.add("done");
-      } else if (btn.textContent !== "Verify") {
-        // Only reset to "Go" if the user hasn't already clicked Go this session
-        btn.textContent = "Go";
-        btn.classList.remove("done");
-      }
-    }
   }
 
   async function loadUser() {
@@ -447,43 +385,6 @@
     const link = refLinkEl.textContent;
     const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Join me and earn points!")}`;
     tg?.openTelegramLink ? tg.openTelegramLink(shareUrl) : window.open(shareUrl, "_blank");
-  });
-
-  document.querySelectorAll("[data-task-btn]").forEach((btn) => {
-    const task = btn.getAttribute("data-task-btn");
-    const row = document.querySelector(`[data-task="${task}"]`);
-    const url = row?.getAttribute("data-task-url");
-
-    btn.addEventListener("click", async () => {
-      if (currentUser?.tasks?.[task]) return; // already done
-
-      // First click: open the link, switch this button to "Verify"
-      if (btn.textContent === "Go") {
-        if (url) {
-          tg?.openLink ? tg.openLink(url) : window.open(url, "_blank");
-        }
-        btn.textContent = "Verify";
-        return;
-      }
-
-      // Second click: ask the backend to confirm and pay out
-      const res = await fetch(`${API_BASE}/api/task/complete`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, task }),
-      });
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(data.error || "Couldn't verify yet — make sure you completed the step first.");
-        currentUser = data.user || currentUser;
-        render();
-        return;
-      }
-
-      currentUser = data;
-      render();
-    });
   });
 
   // --- Leaderboard ---

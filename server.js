@@ -25,7 +25,6 @@ app.use(express.static("public"));
 
 const POINTS_PER_TAP = 10000;
 const REFERRAL_BONUS = 500000000;
-const TASK_REWARD = 100000000;
 const MAX_CHARGES = 1000;
 const CHARGE_REFILL_MS = 60 * 60 * 1000; // full refill 1 hour after charges hit 0
 const AD_REWARD_CHARGES = 500; // charges granted per completed ad view
@@ -39,8 +38,8 @@ const GAME_STAKES = {
   snake: { win: 10_000_000, loss: 5_000_000 },
 };
 
-const TASK_KEYS = ["telegram", "youtube", "instagram"];
-const TELEGRAM_CHANNEL = "@bakicoins"; // used to verify channel membership
+const TELEGRAM_GROUP = process.env.TELEGRAM_GROUP || "@bakicoins";
+const JOIN_REQUIRED = process.env.JOIN_REQUIRED !== "false";
 
 // Checks whether a user has actually joined the Telegram channel, using
 // the Bot API. Returns true/false. The bot must be a member of the
@@ -51,7 +50,7 @@ async function verifyTelegramMembership(userId) {
 
   try {
     const url = `https://api.telegram.org/bot${token}/getChatMember?chat_id=${encodeURIComponent(
-      TELEGRAM_CHANNEL
+      TELEGRAM_GROUP
     )}&user_id=${encodeURIComponent(userId)}`;
     const res = await fetch(url);
     const data = await res.json();
@@ -88,8 +87,28 @@ function backfillUser(user) {
   if (user.tasks === undefined) {
     user.tasks = { telegram: false, youtube: false, instagram: false };
   }
+  if (user.joinedGroup === undefined) user.joinedGroup = false;
   if (user.referralCount === undefined) user.referralCount = 0;
   return user;
+}
+
+function telegramUserId(req) {
+  return verifyTelegramInitData(req.body?.initData, process.env.BOT_TOKEN) || req.body?.userId;
+}
+
+async function ensureJoined(user, userId) {
+  if (!JOIN_REQUIRED) {
+    user.joinedGroup = true;
+    return true;
+  }
+  if (user.joinedGroup) return true;
+  const joined = await verifyTelegramMembership(userId);
+  if (joined) {
+    user.joinedGroup = true;
+    await saveUser(user);
+    return true;
+  }
+  return false;
 }
 
 // Get or create a user. Called when the mini app first loads.
@@ -112,6 +131,7 @@ app.post("/api/user", async (req, res) => {
       referredBy: null,
       referralCount: 0,
       tasks: { telegram: false, youtube: false, instagram: false },
+      joinedGroup: false,
       createdAt: new Date().toISOString(),
     };
 
@@ -137,6 +157,7 @@ app.post("/api/user", async (req, res) => {
   }
 
   if (changed) await saveUser(user);
+  await ensureJoined(user, user.id);
   res.json(user);
 });
 
@@ -150,6 +171,10 @@ app.post("/api/tap", async (req, res) => {
 
   backfillUser(user);
   refillCharges(user);
+
+  if (!(await ensureJoined(user, user.id))) {
+    return res.status(403).json({ error: "Join the Telegram group first.", user });
+  }
 
   if (user.charges <= 0) {
     return res.status(400).json({ error: "no charges left", user });
